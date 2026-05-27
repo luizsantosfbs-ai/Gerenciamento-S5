@@ -745,7 +745,7 @@ async function carregarDados() {
         const data = JSON.parse(j);
         if (restorePlans(data)) {
           setSyncState('ok', '💾 Dados locais carregados');
-          notify('💾 Dados carregados do cache local!');
+          // notificação de carga silenciosa
         }
       } else {
         setSyncState('idle', 'Nenhum dado encontrado');
@@ -758,7 +758,7 @@ async function carregarDados() {
     if (restorePlans(data)) {
       const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
       setSyncState('ok', '☁ ' + plans.length + ' planos carregados');
-      notify('☁ ' + plans.length + ' planos carregados da nuvem!');
+      // notificação de carga silenciosa
     }
   } catch(e) {
     // Fallback para localStorage em caso de erro de rede
@@ -1186,6 +1186,10 @@ function renderDetail() {
         ${p.setoresAcoes.map(s => `<span class="pl-s">${s}</span>`).join('')}
       </div>
     </div>
+    ${p.obs ? `<div class="df" style="margin-top:.6rem">
+      <label>Observação</label>
+      <div style="margin-top:4px;font-size:12px;color:var(--g900);background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:10px 12px;line-height:1.6;white-space:pre-wrap">${p.obs.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+    </div>` : ''}
   </div>
 
   <div class="card">
@@ -1347,6 +1351,10 @@ function showForm(ed=false) {
         <option value="none"${p.gp==='none'?' selected':''}>Sem score</option>
       </select></div>
     </div>
+    <div class="fg" style="margin-top:.4rem;margin-bottom:0">
+      <label>Observação <span style="font-weight:400;color:var(--g400);font-size:10px">(opcional — detalhamento do plano de ação)</span></label>
+      <textarea id="fobs" rows="4" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:12px;font-family:inherit;line-height:1.6;resize:vertical;color:var(--g900);background:var(--wh);outline:none" placeholder="Descreva o contexto, causa raiz, impacto ou qualquer detalhe relevante sobre este plano de ação..." onfocus="this.style.borderColor='var(--g1)'" onblur="this.style.borderColor='var(--g200)'">${(p.obs||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+    </div>
   </div>
   <div class="card">
     <div class="card-ttl">Ações</div>
@@ -1379,12 +1387,14 @@ function savePlan(id) {
   const sa = document.getElementById('fs').value.trim();
   const se = [...new Set(fActs.map(a => a.setor).filter(Boolean))];
   if (sa && !se.includes(sa)) se.unshift(sa);
+  const obsEl = document.getElementById('fobs');
   const p = {
     id, title:t, empresa:document.getElementById('fe').value.trim(),
     processo:document.getElementById('fp').value.trim()||'S5',
     setor:sa, setoresAcoes:se, responsible:document.getElementById('fr').value.trim(),
     deadline:document.getElementById('fd').value, status:document.getElementById('fst').value,
     gs, gp:document.getElementById('fgp').value, gc:'—',
+    obs: obsEl ? obsEl.value.trim() : '',
     actions:fActs.map(a => ({...a})), evidences:fEvs
   };
   const idx = plans.findIndex(x => x.id===id);
@@ -1621,6 +1631,7 @@ function applyImport() {
       actions,      // TODAS as ações atualizadas da planilha
       evidences:    existing ? existing.evidences : [],  // preservar evidências!
       gs, gp, gc,
+      obs:          existing ? (existing.obs || '') : '',  // preservar observação
       importedAt:   new Date().toISOString()
     };
   }).sort((a,b) => b.gs-a.gs || a.title.localeCompare(b.title));
@@ -2254,6 +2265,8 @@ function init() {
     setSyncState('idle', '⚙ Configurar nuvem');
   } else {
     carregarDados();
+    // Se não tiver nome, pedir após carregar
+    if (!currentUser) setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 1500);
   }
 }
 
@@ -2377,6 +2390,8 @@ function showGistSetup(onSuccess) {
         2. <a href="https://gist.github.com" target="_blank">Criar um Gist secreto</a> com arquivo <code>natto-pa-s5.json</code><br>
         3. Copiar o ID da URL do Gist (ex: <code>abc123def456...</code>)
       </div>
+      <label>Seu Nome</label>
+      <input id="cfg-user-name" type="text" placeholder="Ex: João Silva ou joao.silva" autocomplete="off" spellcheck="false" style="font-family:inherit">
       <label>ID do Gist</label>
       <input id="cfg-gist-id" type="text" placeholder="819172f79e3cf13ee43ca95c145595e9" autocomplete="off" spellcheck="false">
       <label>Token GitHub (ghp_...)</label>
@@ -2394,6 +2409,9 @@ function showGistSetup(onSuccess) {
     document.getElementById('cfg-gist-id').value = cfg.id || '';
     document.getElementById('cfg-gist-token').value = cfg.token || '';
   }
+  // Pré-preencher nome do usuário atual
+  const nameInp = document.getElementById('cfg-user-name');
+  if (nameInp) nameInp.value = currentUser || localStorage.getItem(USER_KEY) || '';
   window._gistOnSuccess = onSuccess || null;
 }
 
@@ -2417,6 +2435,14 @@ async function connectGist() {
     if (res.status === 404) throw new Error('Gist não encontrado. Verifique o ID.');
     if (!res.ok) throw new Error('Erro HTTP ' + res.status);
     saveGistCfg(id, token);
+    // Salvar nome do usuário se preenchido
+    const nameVal = (document.getElementById('cfg-user-name').value || '').trim();
+    if (nameVal) {
+      currentUser = nameVal;
+      localStorage.setItem(USER_KEY, nameVal);
+      const badge = document.getElementById('user-badge-txt');
+      if (badge) badge.textContent = nameVal;
+    }
     document.getElementById('gist-setup-overlay').remove();
     notify('☁ Conectado! Carregando dados...', 'ok');
     if (window._gistOnSuccess) window._gistOnSuccess();
@@ -2436,6 +2462,6 @@ function resetGistCfg() {
   showGistSetup();
 }
 
-</script><div class="nt" style="background: var(--g1);">✅ 25 planos carregados!</div>
+</script>
 
 </body></html>
