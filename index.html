@@ -633,53 +633,12 @@ const RAW={};
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PERSISTÊNCIA — Firebase REST API (sem SDK, funciona em qualquer host)
+// PERSISTÊNCIA — localStorage (dados salvos localmente no navegador)
 // ══════════════════════════════════════════════════════════════════════════════
+const SKEY = 'natto-pa-s5';
+let autoSaveTimer = null;
 
-const SKEY  = 'natto-pa-s5';
-const FB_URL = 'https://firestore.googleapis.com/v1/projects/planos-de-acao-c95ed/databases/(default)/documents/planos_s5/dados';
-const ST_URL = 'https://firebasestorage.googleapis.com/v0/b/planos-de-acao-c95ed.firebasestorage.app/o';
-
-let autoSaveTimer  = null;
-let pollTimer      = null;
-let lastSavedAt    = null;
-
-// ── HELPERS REST ──────────────────────────────────────────────────────────────
-
-// Converter objeto JS → formato Firestore REST
-function toFirestore(obj) {
-  if (obj === null || obj === undefined) return { nullValue: null };
-  if (typeof obj === 'boolean') return { booleanValue: obj };
-  if (typeof obj === 'number')  return Number.isInteger(obj) ? { integerValue: String(obj) } : { doubleValue: obj };
-  if (typeof obj === 'string')  return { stringValue: obj };
-  if (Array.isArray(obj))       return { arrayValue: { values: obj.map(toFirestore) } };
-  if (typeof obj === 'object') {
-    const fields = {};
-    for (const k in obj) fields[k] = toFirestore(obj[k]);
-    return { mapValue: { fields } };
-  }
-  return { stringValue: String(obj) };
-}
-
-// Converter formato Firestore REST → objeto JS
-function fromFirestore(val) {
-  if (!val) return null;
-  if ('nullValue'    in val) return null;
-  if ('booleanValue' in val) return val.booleanValue;
-  if ('integerValue' in val) return parseInt(val.integerValue, 10);
-  if ('doubleValue'  in val) return val.doubleValue;
-  if ('stringValue'  in val) return val.stringValue;
-  if ('arrayValue'   in val) return (val.arrayValue.values || []).map(fromFirestore);
-  if ('mapValue'     in val) {
-    const obj = {};
-    const fields = val.mapValue.fields || {};
-    for (const k in fields) obj[k] = fromFirestore(fields[k]);
-    return obj;
-  }
-  return null;
-}
-
-// ── SERIALIZAR ────────────────────────────────────────────────────────────────
+// Serializar estado para salvar
 function mkPayload() {
   return {
     plans: plans.map(p => ({
@@ -688,105 +647,54 @@ function mkPayload() {
         name:    e.name    || '',
         size:    e.size    || '',
         type:    e.type    || '',
-        url:     e.url     || '',
-        path:    e.path    || '',
-        dataUrl: ''
+        dataUrl: e.dataUrl || ''   // base64 para download local
       }))
     })),
     savedAt: new Date().toISOString(),
-    version: 15
+    version: 14
   };
 }
 
-// ── AUTO-SAVE ─────────────────────────────────────────────────────────────────
+// Auto-save com debounce de 2 s
 function scheduleAutoSave() {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(() => salvarDados(true), 2000);
 }
 
-// ── SALVAR via REST ───────────────────────────────────────────────────────────
-async function salvarDados(silent) {
-  const payload = mkPayload();
-  try { localStorage.setItem(SKEY, JSON.stringify(payload)); } catch(e) {}
-
-  setSyncState('saving', '⏳ Salvando...');
+// ── SALVAR no localStorage ────────────────────────────────────────────────────
+function salvarDados(silent = false) {
   try {
-    const fields = {};
-    for (const k in payload) fields[k] = toFirestore(payload[k]);
-    const resp = await fetch(FB_URL + '?updateMask.fieldPaths=plans&updateMask.fieldPaths=savedAt&updateMask.fieldPaths=version', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields })
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    localStorage.setItem(SKEY, JSON.stringify(mkPayload()));
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    lastSavedAt = payload.savedAt;
-    setSyncState('ok', '☁️ Salvo ' + ts);
-    if (!silent) notify('☁️ Dados salvos na nuvem!');
+    setSyncState('ok', '💾 Salvo ' + ts);
+    if (!silent) notify('💾 Dados salvos!');
   } catch(e) {
     setSyncState('err', '⚠ Erro ao salvar');
-    if (!silent) notify('❌ Erro: ' + e.message, 'err');
+    if (!silent) notify('❌ Erro ao salvar: ' + e.message, 'err');
   }
 }
-function cloudSave(silent) { return salvarDados(silent); }
+// Alias
+function cloudSave(silent = false) { return salvarDados(silent); }
 
-// ── CARREGAR via REST ─────────────────────────────────────────────────────────
-async function carregarDados() {
-  setSyncState('saving', '🔄 Carregando...');
+// ── CARREGAR do localStorage ──────────────────────────────────────────────────
+function carregarDados() {
   try {
-    const resp = await fetch(FB_URL);
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const json = await resp.json();
-    const data = fromFirestore({ mapValue: { fields: json.fields } });
-    if (data && data.plans && data.plans.length) {
-      lastSavedAt = data.savedAt || null;
-      restorePlans(data);
-      setSyncState('ok', '☁️ ' + plans.length + ' planos carregados');
-      notify('☁️ ' + plans.length + ' planos carregados!');
-      iniciarPolling();
-    } else {
-      carregarLocal();
+    const j = localStorage.getItem(SKEY);
+    if (!j) { setSyncState('idle', 'Dados padrão'); return; }
+    const data = JSON.parse(j);
+    if (restorePlans(data)) {
+      const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+      setSyncState('ok', '✅ ' + plans.length + ' planos carregados');
+      notify('✅ ' + plans.length + ' planos carregados!');
     }
   } catch(e) {
-    console.warn('Firestore REST error:', e.message);
-    carregarLocal();
+    setSyncState('err', '⚠ Erro ao carregar');
+    notify('❌ Erro ao carregar: ' + e.message, 'err');
   }
 }
 function cloudLoad() { return carregarDados(); }
 
-// ── POLLING — detectar alterações de outros usuários ─────────────────────────
-function iniciarPolling() {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    try {
-      const resp = await fetch(FB_URL);
-      if (!resp.ok) return;
-      const json = await resp.json();
-      const data = fromFirestore({ mapValue: { fields: json.fields } });
-      if (data && data.savedAt && data.savedAt !== lastSavedAt) {
-        lastSavedAt = data.savedAt;
-        restorePlans(data);
-        const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-        setSyncState('ok', '☁️ Atualizado ' + ts);
-        notify('🔄 Dados atualizados por outro usuário');
-      }
-    } catch(e) {}
-  }, 15000); // checar a cada 15 segundos
-}
-
-// ── FALLBACK LOCAL ────────────────────────────────────────────────────────────
-function carregarLocal() {
-  try {
-    const j = localStorage.getItem(SKEY);
-    if (!j) { setSyncState('idle', 'Sem dados'); return; }
-    const data = JSON.parse(j);
-    if (restorePlans(data)) setSyncState('warn', '⚠ Dados locais');
-  } catch(e) {
-    setSyncState('err', '⚠ Erro ao carregar');
-  }
-}
-
-// ── RESTAURAR ────────────────────────────────────────────────────────────────
+// ── RESTAURAR estado ──────────────────────────────────────────────────────────
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
   plans = data.plans;
@@ -796,7 +704,6 @@ function restorePlans(data) {
   if (scr && scr.classList.contains('active')) setTimeout(renderReport, 100);
   return true;
 }
-
 
 // ── EXPORTAR JSON ─────────────────────────────────────────────────────────────
 function exportJSON() {
@@ -1286,67 +1193,22 @@ function trigUp(pid) {
   fi.click();
 }
 function hDrop(e, pid) { e.preventDefault(); e.currentTarget.classList.remove('dg'); addFs(pid, [...e.dataTransfer.files]); }
-
-async function addFs(pid, files) {
+function addFs(pid, files) {
   const p = plans.find(x => x.id===pid); if (!p) return;
-  if (!p.evidences) p.evidences = [];
-
-  notify('⏳ Enviando ' + files.length + ' arquivo(s)...');
-  setSyncState('saving', '⏳ Enviando...');
-
   let done = 0;
-  for (const file of files) {
-    try {
-      const path = encodeURIComponent('evidencias/' + pid + '/' + Date.now() + '_' + file.name);
-      const uploadResp = await fetch(ST_URL + '?uploadType=media&name=' + path, {
-        method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file
-      });
-      if (!uploadResp.ok) throw new Error('Upload HTTP ' + uploadResp.status);
-      const meta = await uploadResp.json();
-      const token = meta.downloadTokens;
-      const url = ST_URL + '/' + path + '?alt=media&token=' + token;
-      p.evidences.push({ name: file.name, size: fSz(file.size), url, dataUrl: '', path: decodeURIComponent(path), type: file.type });
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      p.evidences.push({name:file.name, size:fSz(file.size), dataUrl:e.target.result, type:file.type});
       done++;
-    } catch(err) {
-      notify('❌ Erro no arquivo ' + file.name + ': ' + err.message, 'err');
-    }
-  }
-
-  if (done > 0) {
-    renderDetail();
-    notify('✅ ' + done + ' evidência(s) salva(s) na nuvem!');
-    scheduleAutoSave();
-  }
-  setSyncState('ok', '☁️ Pronto');
-}
-
-function openEv(pid, idx) {
-  const p = plans.find(x => x.id===pid); if (!p) return;
-  const ev = (p.evidences||[])[idx];
-  if (!ev) return notify('Arquivo não disponível', 'warn');
-  const src = ev.url || ev.dataUrl;
-  if (!src) return notify('Arquivo não disponível', 'warn');
-  window.open(src, '_blank');
-}
-
-function remEv(pid, idx) {
-  const p = plans.find(x => x.id===pid);
-  if (p) { p.evidences.splice(idx,1); renderDetail(); notify('Evidência removida'); scheduleAutoSave(); }
-}
-
-function downloadEv(pid, idx) {
-  const p = plans.find(x => x.id===pid); if (!p) return;
-  const ev = (p.evidences||[])[idx];
-  if (!ev) return notify('Arquivo não disponível', 'warn');
-  const src = ev.url || ev.dataUrl;
-  if (!src) return notify('Arquivo não disponível', 'warn');
-  const a = document.createElement('a'); a.href=src; a.download=ev.name; a.target='_blank'; a.click();
+      if (done===files.length) { renderDetail(); notify(files.length+' evidência(s) anexada(s)'); scheduleAutoSave(); }
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function evHtml(p) {
-  return (p.evidences||[]).map((e,i) => `
+  return p.evidences.map((e,i) => `
     <div class="ei">
       <span class="ei-icon" onclick="openEv('${p.id}',${i})">${fIcon(e.name)}</span>
       <span class="en" onclick="openEv('${p.id}',${i})" title="Clique para abrir">${e.name}</span>
@@ -1357,7 +1219,6 @@ function evHtml(p) {
       </div>
     </div>`).join('');
 }
-
 
 // ═══════════════════════════════════════════════════════════
 // FORMULÁRIO
