@@ -1224,6 +1224,24 @@ function renderDetail() {
     </table>` : '<p style="font-size:11px;color:var(--g400)">Nenhuma ação para este filtro.</p>'}
   </div>
 
+  <div class="card" id="obs-card">
+    <div class="card-ttl">Observação</div>
+    ${p.obs ? `
+    <div style="font-size:12px;color:var(--g900);background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:10px 12px;line-height:1.6;white-space:pre-wrap;margin-bottom:10px">${p.obs.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+    ` : ''}
+    <textarea id="obs-inline-${p.id}" rows="3"
+      style="width:100%;box-sizing:border-box;padding:8px 10px;border:1.5px solid var(--g200);border-radius:8px;font-size:12px;font-family:inherit;line-height:1.6;resize:vertical;color:var(--g900);background:var(--wh);outline:none;display:block"
+      placeholder="${p.obs ? 'Editar observação...' : 'Adicionar observação sobre este plano de ação...'}"
+      onfocus="this.style.borderColor='var(--g1)'"
+      onblur="this.style.borderColor='var(--g200)'"
+    >${(p.obs||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <button class="bs" style="font-size:11px;padding:6px 16px" onclick="saveObsInline('${p.id}')">
+        ${p.obs ? '✏ Atualizar' : '+ Adicionar'}
+      </button>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-ttl">Evidências (${p.evidences.length})</div>
     <div class="el">${evHtml(p)}</div>
@@ -2460,6 +2478,25 @@ function resetGistCfg() {
   clearGistCfg();
   notify('Configuração removida. Reconecte para sincronizar.', 'warn');
   showGistSetup();
+}
+
+
+// ── Observação inline ─────────────────────────────────────────────────────────
+function saveObsInline(pid) {
+  const p = plans.find(x => x.id === pid);
+  if (!p) return;
+  const ta = document.getElementById('obs-inline-' + pid);
+  if (!ta) return;
+  const val = ta.value.trim();
+  const old = p.obs || '';
+  p.obs = val;
+  auditLog('obs', p.title,
+    old ? 'Observação atualizada' : 'Observação adicionada',
+    val.length > 80 ? val.slice(0, 80) + '…' : val
+  );
+  renderDetail();
+  notify(val ? '📝 Observação salva!' : '📝 Observação removida');
+  scheduleAutoSave();
 }
 
 </script>
