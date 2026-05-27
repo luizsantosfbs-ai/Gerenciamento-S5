@@ -681,6 +681,7 @@ function mkPayload() {
         dataUrl: e.dataUrl || ''
       }))
     })),
+    audit: loadAuditLog(),
     savedAt: new Date().toISOString(),
     version: 14
   };
@@ -775,6 +776,10 @@ function cloudLoad() { return carregarDados(); }
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
   plans = data.plans;
+  // Restaurar audit log do Gist se presente
+  if (data.audit && Array.isArray(data.audit)) {
+    try { localStorage.setItem(AUDIT_KEY, JSON.stringify(data.audit)); } catch(e) {}
+  }
   bRM(); cur = null; filtSetor = ''; filtProc = ''; filt = 'all';
   renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
   const scr = document.getElementById('rpt-screen');
@@ -873,11 +878,13 @@ function xlDate(v) {
 
 function toAS(s) {
   if (!s) return 'aberto';
-  const n = s.trim().toLowerCase();
-  if (n === 'concluída' || n === 'concluida' || n === 'concluído') return 'concluido';
-  if (n === 'atrasado' || n === 'atrasada') return 'atrasado';
-  if (n === 'falta prazo') return 'falta_prazo';
-  if (n === 'em andamento') return 'em_andamento';
+  const n = s.trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, ''); // remover acentos
+  if (n === 'concluida' || n === 'concluido' || n.startsWith('conclu')) return 'concluido';
+  if (n === 'atrasado'  || n === 'atrasada'  || n.startsWith('atras'))  return 'atrasado';
+  if (n === 'falta prazo' || n === 'falta_prazo' || n === 'sem prazo')   return 'falta_prazo';
+  if (n === 'em andamento' || n === 'em_andamento' || n.startsWith('em and')) return 'em_andamento';
+  if (n === 'aberto' || n === 'open') return 'aberto';
   return 'aberto';
 }
 
@@ -887,10 +894,12 @@ function lDL(rows) {
 }
 
 function pSt(rows) {
-  const s = rows.map(r => r.status);
-  if (s.every(x => x === 'Concluída')) return 'concluido';
-  if (s.some(x => x === 'Atrasado')) return 'atrasado';
-  if (s.some(x => x === 'Em andamento')) return 'em_andamento';
+  // Normalizar usando toAS para garantir consistência com a planilha
+  const s = rows.map(r => toAS(r.status));
+  if (s.length && s.every(x => x === 'concluido')) return 'concluido';
+  if (s.some(x => x === 'atrasado'))    return 'atrasado';
+  if (s.some(x => x === 'em_andamento')) return 'em_andamento';
+  if (s.some(x => x === 'falta_prazo')) return 'falta_prazo';
   return 'aberto';
 }
 
@@ -2101,6 +2110,8 @@ function loadAuditLog() {
 }
 
 function saveAuditLog(log) {
+  // Dispara sync para o Gist incluir o audit atualizado
+  scheduleAutoSave();
   try {
     // Manter apenas os AUDIT_MAX mais recentes
     const trimmed = log.slice(-AUDIT_MAX);
@@ -2125,6 +2136,28 @@ function auditLog(type, planTitle, description, extra) {
 // ── Abrir / fechar tela ───────────────────────────────────────────────────────
 function openAudit() {
   document.getElementById('audit-screen').classList.add('active');
+  // Recarregar do Gist para ver edições de outros usuários
+  const cfg = getGistCfg();
+  if (cfg) {
+    fetch('https://api.github.com/gists/' + cfg.id, {
+      headers: { 'Authorization': 'token ' + cfg.token }
+    }).then(r => r.json()).then(gist => {
+      const file = gist.files[GIST_FILENAME];
+      if (file && file.content) {
+        try {
+          const data = JSON.parse(file.content);
+          if (data.audit && Array.isArray(data.audit)) {
+            localStorage.setItem(AUDIT_KEY, JSON.stringify(data.audit));
+            renderAudit();
+          }
+          if (data.plans && data.plans.length) {
+            plans = data.plans;
+            try { localStorage.setItem(SKEY, JSON.stringify(data)); } catch(e) {}
+          }
+        } catch(e) {}
+      }
+    }).catch(() => {});
+  }
   const ct = document.getElementById('ct');
   const fb = document.getElementById('fb');
   if (ct) ct.style.display = 'none';
