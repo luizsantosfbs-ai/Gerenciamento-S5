@@ -69,9 +69,9 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--g100);color
 .sync-ind.idle{background:var(--g100);color:var(--g400)}
 .sync-ind.saving{background:var(--ambl);color:var(--amb)}
 .sync-ind.ok{background:var(--g1l);color:var(--g1d)}
-.sync-ind.err{background:var(--redl);color:var(--red)}
+.sync-ind.err{background:var(--redl);color:var(--red)}.sync-ind.syncing{background:var(--ambl);color:var(--amb)}.sync-ind.warn{background:#fff3cd;color:#856404}
 .sync-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
-.sync-ind.saving .sync-dot{animation:pulse .8s infinite}
+.sync-ind.saving .sync-dot{animation:pulse .8s infinite}.sync-ind.syncing .sync-dot{animation:pulse .8s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .ct{flex:1;overflow-y:auto;padding:.85rem;background:var(--g50)}
 
@@ -317,6 +317,23 @@ input[type=file]{display:none}
 /* Snapshot badge */
 .rpt-snapshot{display:none;background:var(--ambl);border:1px solid var(--amb);border-radius:6px;padding:.35rem .7rem;font-size:9.5px;color:var(--amb);font-weight:600;align-items:center;gap:5px}
 .rpt-snapshot.show{display:flex}
+
+/* ── Gist Setup Modal ─────────────────────────────────────────────────────── */
+.gist-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.gist-modal{background:var(--wh);border-radius:16px;padding:32px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.gist-modal h2{margin:0 0 6px;font-size:18px;color:var(--g1d)}
+.gist-modal p{margin:0 0 20px;font-size:13px;color:var(--g400);line-height:1.5}
+.gist-modal label{display:block;font-size:12px;font-weight:600;color:var(--g1d);margin-bottom:4px}
+.gist-modal input{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;margin-bottom:14px;font-family:monospace;color:#333}
+.gist-modal input:focus{outline:none;border-color:var(--g1)}
+.gist-modal .gist-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
+.gist-modal .btn-cancel{background:var(--g100);color:var(--g400);border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.gist-modal .btn-connect{background:var(--g1);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.gist-modal .btn-connect:hover{background:var(--g1d)}
+.gist-modal .gist-err{color:var(--red);font-size:12px;margin-top:-8px;margin-bottom:10px;display:none}
+.gist-modal .gist-steps{background:var(--g50);border-radius:8px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--g1d);line-height:1.8}
+.gist-modal .gist-steps a{color:var(--g1);text-decoration:none}
+.gist-modal .gist-steps a:hover{text-decoration:underline}
 </style>
 </head>
 <body>
@@ -633,10 +650,24 @@ const RAW={};
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PERSISTÊNCIA — localStorage (dados salvos localmente no navegador)
+// PERSISTÊNCIA — GitHub Gist (sincronização em tempo real entre usuários)
 // ══════════════════════════════════════════════════════════════════════════════
 const SKEY = 'natto-pa-s5';
+const GIST_FILENAME = 'natto-pa-s5.json';
+const CFG_KEY = 'natto-gist-cfg';
+
+// Credenciais carregadas do localStorage (nunca embutidas no código)
+function getGistCfg() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch(e) { return null; }
+}
+function saveGistCfg(id, token) {
+  localStorage.setItem(CFG_KEY, JSON.stringify({ id, token }));
+}
+function clearGistCfg() {
+  localStorage.removeItem(CFG_KEY);
+}
 let autoSaveTimer = null;
+let _saving = false;
 
 // Serializar estado para salvar
 function mkPayload() {
@@ -647,7 +678,7 @@ function mkPayload() {
         name:    e.name    || '',
         size:    e.size    || '',
         type:    e.type    || '',
-        dataUrl: e.dataUrl || ''   // base64 para download local
+        dataUrl: e.dataUrl || ''
       }))
     })),
     savedAt: new Date().toISOString(),
@@ -655,41 +686,87 @@ function mkPayload() {
   };
 }
 
-// Auto-save com debounce de 2 s
+// Auto-save com debounce de 3 s
 function scheduleAutoSave() {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => salvarDados(true), 2000);
+  autoSaveTimer = setTimeout(() => salvarDados(true), 3000);
 }
 
-// ── SALVAR no localStorage ────────────────────────────────────────────────────
-function salvarDados(silent = false) {
+// ── SALVAR no GitHub Gist ─────────────────────────────────────────────────────
+async function salvarDados(silent = false) {
+  if (_saving) return;
+  const cfg = getGistCfg();
+  if (!cfg) { showGistSetup(); return; }
+  _saving = true;
+  setSyncState('syncing', '☁ Salvando...');
   try {
-    localStorage.setItem(SKEY, JSON.stringify(mkPayload()));
+    const payload = mkPayload();
+    try { localStorage.setItem(SKEY, JSON.stringify(payload)); } catch(e) {}
+    const res = await fetch('https://api.github.com/gists/' + cfg.id, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': 'token ' + cfg.token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        files: { [GIST_FILENAME]: { content: JSON.stringify(payload, null, 2) } }
+      })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    setSyncState('ok', '💾 Salvo ' + ts);
-    if (!silent) notify('💾 Dados salvos!');
+    setSyncState('ok', '☁ Salvo ' + ts);
+    if (!silent) notify('☁ Dados salvos na nuvem!');
   } catch(e) {
-    setSyncState('err', '⚠ Erro ao salvar');
+    setSyncState('err', '⚠ Erro ao salvar na nuvem');
     if (!silent) notify('❌ Erro ao salvar: ' + e.message, 'err');
+  } finally {
+    _saving = false;
   }
 }
-// Alias
 function cloudSave(silent = false) { return salvarDados(silent); }
 
-// ── CARREGAR do localStorage ──────────────────────────────────────────────────
-function carregarDados() {
+// ── CARREGAR do GitHub Gist ───────────────────────────────────────────────────
+async function carregarDados() {
+  const cfg = getGistCfg();
+  if (!cfg) { showGistSetup(); return; }
+  setSyncState('syncing', '☁ Carregando...');
   try {
-    const j = localStorage.getItem(SKEY);
-    if (!j) { setSyncState('idle', 'Dados padrão'); return; }
-    const data = JSON.parse(j);
+    const res = await fetch('https://api.github.com/gists/' + cfg.id, {
+      headers: { 'Authorization': 'token ' + cfg.token }
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const gist = await res.json();
+    const file = gist.files[GIST_FILENAME];
+    if (!file || !file.content || file.content.trim() === '{}' || file.content.trim() === '') {
+      // Gist vazio — tentar carregar do localStorage como fallback
+      const j = localStorage.getItem(SKEY);
+      if (j) {
+        const data = JSON.parse(j);
+        if (restorePlans(data)) {
+          setSyncState('ok', '💾 Dados locais carregados');
+          notify('💾 Dados carregados do cache local!');
+        }
+      } else {
+        setSyncState('idle', 'Nenhum dado encontrado');
+      }
+      return;
+    }
+    const data = JSON.parse(file.content);
+    // Salvar no localStorage como cache
+    try { localStorage.setItem(SKEY, JSON.stringify(data)); } catch(e) {}
     if (restorePlans(data)) {
       const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-      setSyncState('ok', '✅ ' + plans.length + ' planos carregados');
-      notify('✅ ' + plans.length + ' planos carregados!');
+      setSyncState('ok', '☁ ' + plans.length + ' planos carregados');
+      notify('☁ ' + plans.length + ' planos carregados da nuvem!');
     }
   } catch(e) {
-    setSyncState('err', '⚠ Erro ao carregar');
-    notify('❌ Erro ao carregar: ' + e.message, 'err');
+    // Fallback para localStorage em caso de erro de rede
+    setSyncState('warn', '⚠ Sem conexão, usando cache local');
+    notify('⚠ Sem conexão com nuvem — carregando cache local', 'warn');
+    try {
+      const j = localStorage.getItem(SKEY);
+      if (j) { const data = JSON.parse(j); restorePlans(data); }
+    } catch(e2) {}
   }
 }
 function cloudLoad() { return carregarDados(); }
@@ -2131,8 +2208,20 @@ function init() {
   renderSB();
   updTopbar();
 
-  // Carregar dados salvos do localStorage
-  carregarDados();
+  // Carregar dados da nuvem (GitHub Gist)
+  const _cfg = getGistCfg();
+  if (!_cfg) {
+    // Sem config: mostrar modal de setup automaticamente
+    setTimeout(showGistSetup, 800);
+    // Tentar carregar do cache local enquanto isso
+    try {
+      const j = localStorage.getItem(SKEY);
+      if (j) { const d = JSON.parse(j); restorePlans(d); }
+    } catch(e) {}
+    setSyncState('idle', '⚙ Configurar nuvem');
+  } else {
+    carregarDados();
+  }
 }
 
 // ── Auto-refresh do report após importação ───────────────────────────────────
@@ -2233,6 +2322,86 @@ window.saveToFile = function(){
   }, 50); // pequeno delay para o DOM se estabilizar
 };
 })();
+
+
+
+// ── GIST SETUP MODAL ─────────────────────────────────────────────────────────
+function showGistSetup(onSuccess) {
+  // Remove existing overlay
+  const existing = document.getElementById('gist-setup-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'gist-setup-overlay';
+  overlay.className = 'gist-overlay';
+  overlay.innerHTML = `
+    <div class="gist-modal">
+      <h2>☁ Conectar à Nuvem</h2>
+      <p>Configure uma vez para sincronizar as alterações com todos os usuários em tempo real.</p>
+      <div class="gist-steps">
+        <strong>Como obter:</strong><br>
+        1. <a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank">Criar token GitHub</a> com escopo <code>gist</code><br>
+        2. <a href="https://gist.github.com" target="_blank">Criar um Gist secreto</a> com arquivo <code>natto-pa-s5.json</code><br>
+        3. Copiar o ID da URL do Gist (ex: <code>abc123def456...</code>)
+      </div>
+      <label>ID do Gist</label>
+      <input id="cfg-gist-id" type="text" placeholder="819172f79e3cf13ee43ca95c145595e9" autocomplete="off" spellcheck="false">
+      <label>Token GitHub (ghp_...)</label>
+      <input id="cfg-gist-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">
+      <div class="gist-err" id="cfg-err"></div>
+      <div class="gist-actions">
+        <button class="btn-cancel" onclick="document.getElementById('gist-setup-overlay').remove()">Cancelar</button>
+        <button class="btn-connect" onclick="connectGist()">Conectar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // Pre-fill if partially stored
+  const cfg = getGistCfg();
+  if (cfg) {
+    document.getElementById('cfg-gist-id').value = cfg.id || '';
+    document.getElementById('cfg-gist-token').value = cfg.token || '';
+  }
+  window._gistOnSuccess = onSuccess || null;
+}
+
+async function connectGist() {
+  const id = document.getElementById('cfg-gist-id').value.trim();
+  const token = document.getElementById('cfg-gist-token').value.trim();
+  const errEl = document.getElementById('cfg-err');
+  errEl.style.display = 'none';
+
+  if (!id || !token) {
+    errEl.textContent = 'Preencha o ID do Gist e o Token.';
+    errEl.style.display = 'block'; return;
+  }
+  const btn = document.querySelector('.btn-connect');
+  btn.textContent = 'Verificando...'; btn.disabled = true;
+  try {
+    const res = await fetch('https://api.github.com/gists/' + id, {
+      headers: { 'Authorization': 'token ' + token }
+    });
+    if (res.status === 401) throw new Error('Token inválido ou sem permissão.');
+    if (res.status === 404) throw new Error('Gist não encontrado. Verifique o ID.');
+    if (!res.ok) throw new Error('Erro HTTP ' + res.status);
+    saveGistCfg(id, token);
+    document.getElementById('gist-setup-overlay').remove();
+    notify('☁ Conectado! Carregando dados...', 'ok');
+    if (window._gistOnSuccess) window._gistOnSuccess();
+    else carregarDados();
+  } catch(e) {
+    errEl.textContent = '❌ ' + e.message;
+    errEl.style.display = 'block';
+    btn.textContent = 'Conectar'; btn.disabled = false;
+  }
+}
+
+// Botão para reconfigurar o Gist (caso queira trocar)
+function resetGistCfg() {
+  if (!confirm('Desconectar da nuvem e redefinir configuração?')) return;
+  clearGistCfg();
+  notify('Configuração removida. Reconecte para sincronizar.', 'warn');
+  showGistSetup();
+}
 
 </script><div class="nt" style="background: var(--g1);">✅ 25 planos carregados!</div>
 
