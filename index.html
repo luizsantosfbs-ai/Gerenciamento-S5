@@ -532,6 +532,7 @@ input[type=file]{display:none}
     <div class="tbt" id="ttl">#1 · Ausência das LPPs das embalagem secundárias</div>
     <div class="tbag" id="tbag" style="">Setor: Controle de Qualidade</div>
     <div class="sync-ind ok" id="sync-ind"><span class="sync-dot"></span><span id="sync-txt">☁ Salvo 14:21</span></div>
+    <button id="recfg-btn" onclick="showGistSetup(null, '🔑 Atualizar Token GitHub')" title="Token expirado ou inválido — clique para atualizar" style="display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#fff3cd;border:1.5px solid #f59e0b;color:#92400e;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap">🔑 Atualizar Token</button>
     <div class="user-badge" id="user-badge" onclick="promptUser()" title="Clique para alterar seu nome">👤 <span id="user-badge-txt">Luiz Santos</span></div>
   </div>
   <div class="ct" id="ct" style="">
@@ -901,8 +902,14 @@ async function salvarDados(silent = false) {
     setSyncState('ok', '☁ Salvo ' + ts);
     if (!silent) notify('☁ Dados salvos na nuvem!');
   } catch(e) {
-    setSyncState('err', '⚠ Erro ao salvar na nuvem');
-    if (!silent) notify('❌ Erro ao salvar: ' + e.message, 'err');
+    const isExpired = e.message && (e.message.includes('401') || e.message.includes('403'));
+    if (isExpired) {
+      setSyncState('err', '🔑 Token expirado');
+      if (!silent) notify('🔑 Token GitHub expirado — clique em "Atualizar Token" para renovar.', 'warn');
+    } else {
+      setSyncState('err', '⚠ Erro ao salvar na nuvem');
+      if (!silent) notify('❌ Erro ao salvar: ' + e.message, 'err');
+    }
   } finally {
     _saving = false;
   }
@@ -944,9 +951,16 @@ async function carregarDados() {
       // notificação de carga silenciosa
     }
   } catch(e) {
-    // Fallback para localStorage em caso de erro de rede
-    setSyncState('warn', '⚠ Sem conexão, usando cache local');
-    notify('⚠ Sem conexão com nuvem — carregando cache local', 'warn');
+    // Detectar se é erro de autenticação (token expirado)
+    const isAuth = e.message && (e.message.includes('401') || e.message.includes('Token'));
+    if (isAuth) {
+      setSyncState('err', '🔑 Token expirado');
+      notify('🔑 Token GitHub expirado — clique em "Atualizar Token" para renovar.', 'warn');
+    } else {
+      setSyncState('warn', '⚠ Sem conexão, usando cache local');
+      notify('⚠ Sem conexão com nuvem — carregando cache local', 'warn');
+    }
+    // Fallback para localStorage em qualquer caso
     try {
       const j = localStorage.getItem(SKEY);
       if (j) { const data = JSON.parse(j); restorePlans(data); }
@@ -1139,6 +1153,9 @@ function setSyncState(state, txt) {
   const t = document.getElementById('sync-txt');
   if (el) el.className = 'sync-ind ' + state;
   if (t) t.textContent = txt;
+  // Mostrar/ocultar botão de reconfigurar token
+  const rb = document.getElementById('recfg-btn');
+  if (rb) rb.style.display = (state === 'err' || state === 'warn') ? '' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2608,7 +2625,7 @@ window.saveToFile = function(){
 
 
 // ── GIST SETUP MODAL ─────────────────────────────────────────────────────────
-function showGistSetup(onSuccess) {
+function showGistSetup(onSuccess, title) {
   // Remove existing overlay
   const existing = document.getElementById('gist-setup-overlay');
   if (existing) existing.remove();
@@ -2618,7 +2635,7 @@ function showGistSetup(onSuccess) {
   overlay.className = 'gist-overlay';
   overlay.innerHTML = `
     <div class="gist-modal">
-      <h2>☁ Conectar à Nuvem</h2>
+      <h2 id="gist-modal-title">☁ Conectar à Nuvem</h2>
       <p>Configure uma vez para sincronizar as alterações com todos os usuários em tempo real.</p>
       <div class="gist-steps">
         <strong>Como obter:</strong><br>
@@ -2639,6 +2656,10 @@ function showGistSetup(onSuccess) {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+  if (title) {
+    const h = document.getElementById('gist-modal-title');
+    if (h) h.textContent = title;
+  }
   // Pre-fill if partially stored
   const cfg = getGistCfg();
   if (cfg) {
@@ -2667,7 +2688,7 @@ async function connectGist() {
     const res = await fetch('https://api.github.com/gists/' + id, {
       headers: { 'Authorization': 'token ' + token }
     });
-    if (res.status === 401) throw new Error('Token inválido ou sem permissão.');
+    if (res.status === 401) throw new Error('Token inválido ou expirado. Gere um novo token em github.com/settings/tokens com escopo gist.');
     if (res.status === 404) throw new Error('Gist não encontrado. Verifique o ID.');
     if (!res.ok) throw new Error('Erro HTTP ' + res.status);
     saveGistCfg(id, token);
@@ -2680,6 +2701,8 @@ async function connectGist() {
       if (badge) badge.textContent = nameVal;
     }
     document.getElementById('gist-setup-overlay').remove();
+    const rb = document.getElementById('recfg-btn');
+    if (rb) rb.style.display = 'none';
     notify('☁ Conectado! Carregando dados...', 'ok');
     if (window._gistOnSuccess) window._gistOnSuccess();
     else carregarDados();
