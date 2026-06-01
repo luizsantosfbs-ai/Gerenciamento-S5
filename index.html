@@ -1061,7 +1061,9 @@ async function carregarDados() {
       const data = JSON.parse(file.content);
       localStorage.setItem(SKEY, JSON.stringify(data));
       localStorage.removeItem('natto-gist-pendente');
-      restorePlans(data);
+      const changed = restorePlans(data);
+      // Se o restorePlans limpou evidências corrompidas, salvar de volta no Gist
+      if (changed) setTimeout(() => salvarDados(true), 1000);
     }
 
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
@@ -1087,6 +1089,7 @@ function cloudLoad() { return carregarDados(); }
 // ── RESTAURAR estado ──────────────────────────────────────────────────────────
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
+  let _evidencesCleaned = false;
   plans = data.plans;
   // Migrar p.obs legado para obsLog
   plans.forEach(p => {
@@ -1097,21 +1100,20 @@ function restorePlans(data) {
     }
     // Limpar evidências com URL corrompida (owner errado, undefined, etc)
     if (p.evidences) {
+      const before = p.evidences.length;
       p.evidences = p.evidences.filter(e => {
         if (!e.url && !e.dataUrl) return false; // sem fonte — remover
         if (e.url) {
-          // Validar que a URL tem owner e repo corretos
-          const validBase = 'https://raw.githubusercontent.com/' + GH_OWNER + '/' + GH_REPO;
-          const apiBase   = 'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO;
-          if (!e.url.startsWith(validBase) && !e.url.startsWith(apiBase) &&
-              !e.url.startsWith('https://raw.githubusercontent.com') &&
-              !e.url.startsWith('data:')) {
-            console.log('[NATTO] Evidência corrompida removida:', e.name, e.url);
-            return false;
+          // Remover URLs que claramente não têm owner/repo corretos
+          // api.github.com/repos.arquivo = owner/repo virou parte do nome
+          if (e.url.includes('repos.') || e.url.includes('repos//')  ||
+              e.url.match(/repos\/[^/]+\.[^/]+$/)) {
+            return false; // URL malformada
           }
         }
         return true;
       });
+      if (p.evidences.length < before) _evidencesCleaned = true;
     }
   });
   // Restaurar audit log do Gist se presente
