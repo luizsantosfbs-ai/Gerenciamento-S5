@@ -845,12 +845,19 @@ const RAW={};
 const SKEY         = 'natto-pa-s5';
 const GIST_FILENAME = 'natto-pa-s5.json';
 const CFG_KEY      = 'natto-gist-cfg';
+const GIST_ID      = '819172f79e3cf13ee43ca95c145595e9'; // ID fixo — não é segredo
 
 function getGistCfg() {
-  try { return JSON.parse(localStorage.getItem(CFG_KEY) || 'null'); } catch(e) { return null; }
+  try {
+    const stored = JSON.parse(localStorage.getItem(CFG_KEY) || 'null');
+    // Sempre usar o GIST_ID fixo, mesmo que o armazenado seja diferente
+    if (stored && stored.token) return { id: GIST_ID, token: stored.token };
+    return null;
+  } catch(e) { return null; }
 }
 function saveGistCfg(id, token) {
-  localStorage.setItem(CFG_KEY, JSON.stringify({ id, token }));
+  // Ignorar o id passado — sempre usar o GIST_ID fixo
+  localStorage.setItem(CFG_KEY, JSON.stringify({ id: GIST_ID, token }));
 }
 function clearGistCfg() { localStorage.removeItem(CFG_KEY); }
 
@@ -2573,104 +2580,93 @@ function showGistSetup(onSuccess, customTitle) {
   var existing = document.getElementById('gist-setup-overlay');
   if (existing) existing.remove();
 
-  var cfg = getGistCfg() || {};
+  var cfg      = getGistCfg() || {};
   var isUpdate = !!cfg.token;
-  var title = customTitle || (isUpdate ? '🔑 Atualizar Token GitHub' : '☁ Conectar à Nuvem');
-
-  var stepsHtml = isUpdate ? '' :
-    '<div class="gist-steps">' +
-    '<strong>Como configurar (apenas 1 vez):</strong><br>' +
-    '1. <a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank">Criar token GitHub</a> com escopo <strong>gist</strong><br>' +
-    '2. <a href="https://gist.github.com" target="_blank">Criar um Gist secreto</a> com arquivo <code>natto-pa-s5.json</code> e conteúdo <code>{}</code><br>' +
-    '3. Copiar o ID do Gist da URL (ex: <code>819172f79e3cf13ee43ca95c145595e9</code>)' +
-    '</div>';
-
-  var tipHtml = isUpdate ?
-    '<div class="gist-tip">⚠ Gere um <strong>novo token</strong> em ' +
-    '<a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>' +
-    ' → Generate new token (classic) → marque <strong>gist</strong> → copie e cole abaixo.</div>' : '';
-
-  var descHtml = isUpdate
-    ? '<p>Seu token expirou ou foi revogado. Gere um novo token e cole abaixo — seus dados não serão perdidos.</p>'
-    : '<p>Configure uma vez para sincronizar com todos os colaboradores em tempo real.</p>';
-
-  var cancelBtn = isUpdate
-    ? '<button class="btn-cancel" onclick="document.getElementById(\'gist-setup-overlay\').remove()">Cancelar — usar cache local</button>'
-    : '<button class="btn-cancel" onclick="document.getElementById(\'gist-setup-overlay\').remove()">Cancelar</button>';
-
-  var connectLbl = isUpdate ? '🔑 Salvar Novo Token' : '☁ Conectar';
-
-  var savedUser = localStorage.getItem('natto-pa-s5-user') || '';
-  var savedId   = cfg.id || '';
+  var title    = customTitle || (isUpdate ? '🔑 Renovar Token' : '☁ Configurar Acesso');
 
   var overlay = document.createElement('div');
-  overlay.id = 'gist-setup-overlay';
+  overlay.id        = 'gist-setup-overlay';
   overlay.className = 'gist-overlay';
   overlay.innerHTML =
     '<div class="gist-modal">' +
       '<h2>' + title + '</h2>' +
-      descHtml +
-      stepsHtml +
-      tipHtml +
+      (isUpdate
+        ? '<div class="gist-tip">⚠ Seu token expirou ou foi revogado. Gere um <strong>novo token Classic</strong> com escopo <strong>gist</strong> e cole abaixo.<br><br>' +
+          'Acesse: <a href="https://github.com/settings/tokens/new" target="_blank"><strong>github.com/settings/tokens/new</strong></a><br>' +
+          '→ Selecione <strong>No expiration</strong><br>' +
+          '→ Marque apenas ✅ <strong>gist</strong><br>' +
+          '→ Clique <strong>Generate token</strong> e copie o <code>ghp_...</code></div>'
+        : '<div class="gist-steps">' +
+          '<strong>Primeiro acesso — configure seu token:</strong><br><br>' +
+          '1. Acesse <a href="https://github.com/settings/tokens/new" target="_blank"><strong>github.com/settings/tokens/new</strong></a><br>' +
+          '2. Note: <code>Natto PA</code> · Expiration: <strong>No expiration</strong><br>' +
+          '3. Marque apenas ✅ <strong>gist</strong><br>' +
+          '4. Clique <strong>Generate token</strong> e cole abaixo' +
+          '</div>') +
       '<label>Seu Nome</label>' +
-      '<input id="cfg-user-name" type="text" placeholder="Ex: João Silva" autocomplete="off">' +
-      '<label>ID do Gist</label>' +
-      '<input id="cfg-gist-id" type="text" placeholder="819172f79e3cf13ee43ca95c145595e9" autocomplete="off">' +
-      '<label>Token GitHub (ghp_...)</label>' +
-      '<input id="cfg-gist-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false">' +
+      '<input id="cfg-user-name" type="text" placeholder="Ex: João Silva" autocomplete="name">' +
+      '<label>Token GitHub (<code>ghp_...</code>)</label>' +
+      '<input id="cfg-gist-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="font-family:monospace">' +
       '<div class="gist-err" id="cfg-err"></div>' +
       '<div class="gist-actions">' +
-        cancelBtn +
-        '<button class="btn-connect" id="cfg-connect-btn" onclick="connectGist()">' + connectLbl + '</button>' +
+        (isUpdate
+          ? '<button class="btn-cancel" onclick="document.getElementById(&quot;gist-setup-overlay&quot;).remove()">Fechar — usar cache</button>'
+          : '') +
+        '<button class="btn-connect" id="cfg-connect-btn" onclick="connectGist()">' +
+          (isUpdate ? '✅ Salvar Novo Token' : '✅ Conectar') +
+        '</button>' +
       '</div>' +
     '</div>';
 
   document.body.appendChild(overlay);
-
-  // Preencher campos após inserir no DOM
-  var nameEl  = document.getElementById('cfg-user-name');
-  var idEl    = document.getElementById('cfg-gist-id');
+  // Preencher nome salvo
+  var nameEl = document.getElementById('cfg-user-name');
+  if (nameEl) nameEl.value = localStorage.getItem('natto-pa-s5-user') || '';
   var tokenEl = document.getElementById('cfg-gist-token');
-  if (nameEl)  nameEl.value  = savedUser;
-  if (idEl)    idEl.value    = savedId;
   if (tokenEl) tokenEl.focus();
-
   window._gistOnSuccess = onSuccess || null;
 }
 
+
 async function connectGist() {
-  var idEl    = document.getElementById('cfg-gist-id');
   var tokenEl = document.getElementById('cfg-gist-token');
   var nameEl  = document.getElementById('cfg-user-name');
   var errEl   = document.getElementById('cfg-err');
   var btn     = document.getElementById('cfg-connect-btn');
 
-  var id    = idEl    ? idEl.value.trim()    : '';
   var token = tokenEl ? tokenEl.value.trim() : '';
   var name  = nameEl  ? nameEl.value.trim()  : '';
 
   errEl.style.display = 'none';
-  if (!id)    { errEl.textContent = 'Informe o ID do Gist.';   errEl.style.display = 'block'; return; }
-  if (!token) { errEl.textContent = 'Informe o Token GitHub.'; errEl.style.display = 'block'; return; }
+  if (!token) {
+    errEl.textContent = '❌ Cole seu token GitHub (ghp_...) no campo acima.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+    errEl.textContent = '❌ Token inválido. Deve começar com ghp_ (token Classic).';
+    errEl.style.display = 'block';
+    return;
+  }
 
   btn.textContent = 'Verificando...';
   btn.disabled = true;
 
   try {
-    var res = await fetch('https://api.github.com/gists/' + id, {
+    var res = await fetch('https://api.github.com/gists/' + GIST_ID, {
       headers: { 'Authorization': 'token ' + token }
     });
     if (res.status === 401 || res.status === 403) {
-      throw new Error('Token inválido ou sem permissão de escopo gist. Verifique se marcou "gist" ao criar.');
+      throw new Error('Token sem permissão. Gere um novo token com escopo ✅ gist em github.com/settings/tokens/new');
     }
     if (res.status === 404) {
-      throw new Error('Gist não encontrado. Verifique se o ID está correto.');
+      throw new Error('Gist não encontrado. Contate o administrador do painel.');
     }
-    if (!res.ok) {
-      throw new Error('Erro HTTP ' + res.status);
-    }
+    if (!res.ok) throw new Error('Erro HTTP ' + res.status);
 
-    saveGistCfg(id, token);
+    // Salvar apenas o token — ID já é fixo via GIST_ID
+    saveGistCfg(GIST_ID, token);
+
     if (name) {
       currentUser = name;
       localStorage.setItem('natto-pa-s5-user', name);
@@ -2683,23 +2679,19 @@ async function connectGist() {
     var rb = document.getElementById('recfg-btn');
     if (rb) rb.style.display = 'none';
     sessionStorage.removeItem('natto-token-modal-shown');
-
     setSyncState('ok', '☁ Conectado!');
+    notify('✅ Conectado! Carregando dados atualizados...');
 
     if (window._gistOnSuccess) {
       window._gistOnSuccess();
     } else {
-      // Verificar se há dados pendentes para enviar antes de carregar do Gist
       var pendente = localStorage.getItem('natto-gist-pendente') === '1';
       if (pendente) {
-        notify('☁ Reconectado! Enviando suas edições pendentes...');
         salvarDados(false).then(() => carregarDados());
       } else {
-        notify('☁ Conectado! Sincronizando...');
         carregarDados();
       }
     }
-
   } catch(e) {
     errEl.textContent = '❌ ' + e.message;
     errEl.style.display = 'block';
