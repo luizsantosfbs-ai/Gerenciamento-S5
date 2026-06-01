@@ -978,6 +978,7 @@ function updateSyncBadge() {
 }
 
 // Serializar estado para salvar
+// mkPayload — usado para salvar no Gist (inclui audit)
 function mkPayload() {
   // FIX #3: adicionar version, updatedAt, updatedBy para controle de conflitos
   const prevPayload = (() => {
@@ -994,7 +995,7 @@ function mkPayload() {
         type:    e.type    || '',
         attId:   e.attId   || '',
         url:     e.url     || '',
-        dataUrl: ''          // nunca salvar base64 no arquivo principal
+        dataUrl: ''          // NUNCA salvar base64 no arquivo principal
       })),
       obsLog: p.obsLog || []
     })),
@@ -1004,6 +1005,72 @@ function mkPayload() {
     updatedAt: new Date().toISOString(),
     updatedBy: getUser()
   };
+}
+
+// mkLocalPayload — versão ENXUTA para localStorage (sem base64, sem audit inline)
+// Evita estourar a quota de ~5 MB do localStorage
+function mkLocalPayload() {
+  const prevPayload = (() => {
+    try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch(e) { return {}; }
+  })();
+  const newVersion = (prevPayload.version || 14) + 1;
+
+  return {
+    plans: plans.map(p => ({
+      ...p,
+      evidences: (p.evidences || []).map(e => ({
+        name:    e.name    || '',
+        size:    e.size    || '',
+        type:    e.type    || '',
+        attId:   e.attId   || '',
+        url:     '',
+        dataUrl: ''   // NUNCA base64 no localStorage
+      })),
+      obsLog: (p.obsLog || []).slice(-20) // máx 20 obs por plano no cache local
+    })),
+    // audit NÃO vai aqui — já está em AUDIT_KEY separado
+    savedAt: new Date().toISOString(),
+    version: newVersion,
+    updatedAt: new Date().toISOString(),
+    updatedBy: getUser()
+  };
+}
+
+// Salvar no localStorage de forma segura — sem estourar quota
+function saveLocalCache() {
+  try {
+    const payload = mkLocalPayload();
+    const json = JSON.stringify(payload);
+    localStorage.setItem(SKEY, json);
+    return true;
+  } catch(e) {
+    // Quota excedida — tentar salvar versão ainda mais enxuta (só IDs e status)
+    try {
+      const minimal = {
+        plans: plans.map(p => ({
+          id: p.id, title: p.title, status: p.status, gs: p.gs, gp: p.gp,
+          setor: p.setor, setoresAcoes: p.setoresAcoes, responsible: p.responsible,
+          deadline: p.deadline, processo: p.processo, empresa: p.empresa,
+          actions: p.actions.map(a => ({
+            what: a.what, who: a.who, setor: a.setor,
+            when: a.when, when_real: a.when_real, status: a.status
+          })),
+          evidences: (p.evidences || []).map(e => ({
+            name: e.name, size: e.size, type: e.type, attId: e.attId
+          })),
+          obsLog: []
+        })),
+        savedAt: new Date().toISOString(),
+        _minimal: true
+      };
+      localStorage.setItem(SKEY, JSON.stringify(minimal));
+      console.warn('[Natto] localStorage quota: salvo versão minimal');
+      return true;
+    } catch(e2) {
+      console.error('[Natto] localStorage completamente cheio:', e2);
+      return false;
+    }
+  }
 }
 
 function mkAttachPayload() {
@@ -1016,16 +1083,12 @@ function scheduleAutoSave() {
   _pendingSaveCount++;
   setSyncState('warn', `🔵 ${_pendingSaveCount} alteração(ões) pendente(s)`);
 
-  // Salvar imediatamente no localStorage (nunca perde)
-  try {
-    const snapshot = mkPayload();
-    localStorage.setItem(SKEY, JSON.stringify(snapshot));
-    // FIX #5: também salvar no IndexedDB offline
-    saveToIndexedDB(snapshot);
-  } catch(e) {}
+  // Salvar enxuto no localStorage (sem base64, sem estourar quota)
+  saveLocalCache();
+  // FIX #5: também salvar no IndexedDB offline (versão enxuta)
+  saveToIndexedDB(mkLocalPayload());
 
   if (_saving) {
-    // Há um salvamento em andamento — marcar como pendente
     _hasPendingSave = true;
     return;
   }
@@ -1037,11 +1100,9 @@ function scheduleAutoSave() {
 function saveImmediate(reason) {
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
   _pendingSaveCount++;
-  try {
-    const snapshot = mkPayload();
-    localStorage.setItem(SKEY, JSON.stringify(snapshot));
-    saveToIndexedDB(snapshot);
-  } catch(e) {}
+  // Salvar enxuto no localStorage
+  saveLocalCache();
+  saveToIndexedDB(mkLocalPayload());
   // Não chamar salvarDados se já está salvando
   if (!_saving) {
     salvarDados(true);
@@ -1060,10 +1121,12 @@ async function salvarDados(silent = false) {
   _saving = true;
   _hasPendingSave = false;
 
-  // Sempre salvar no localStorage primeiro (nunca perde dado)
+  // Salvar versão ENXUTA no localStorage (sem base64 — nunca estoura quota)
+  saveLocalCache();
+  saveToIndexedDB(mkLocalPayload());
+
+  // Construir payload COMPLETO apenas para o Gist
   const payload = mkPayload();
-  try { localStorage.setItem(SKEY, JSON.stringify(payload)); } catch(e) {}
-  try { saveToIndexedDB(payload); } catch(e) {}
 
   const cfg = getGistCfg();
   if (!cfg) {
@@ -1178,7 +1241,7 @@ async function carregarDados() {
     const j = localStorage.getItem(SKEY);
     if (j) {
       const cached = JSON.parse(j);
-      if (cached.attachments) _attachments = cached.attachments;
+      // Attachments NÃO ficam no localStorage — vêm apenas do Gist
       restorePlans(cached);
     }
   } catch(e) {}
@@ -1232,10 +1295,10 @@ async function carregarDados() {
       }
     }
 
-    data.attachments = _attachments;
-    localStorage.setItem(SKEY, JSON.stringify(data));
+    data.attachments = _attachments; // manter em memória apenas
     localStorage.removeItem('natto-gist-pendente');
     restorePlans(data);
+    saveLocalCache(); // salvar versão ENXUTA (sem base64) no localStorage
 
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
     setSyncState('ok', '☁ Sincronizado ' + ts);
@@ -2975,7 +3038,7 @@ function openAudit() {
           }
           if (data.plans && data.plans.length) {
             plans = data.plans;
-            try { localStorage.setItem(SKEY, JSON.stringify(data)); } catch(e) {}
+            try { saveLocalCache(); } catch(e) {}
           }
         } catch(e) {}
       }
@@ -3097,7 +3160,7 @@ function init() {
           if (p.evidences.length < before) cleaned = true;
         });
         if (cleaned) {
-          localStorage.setItem(SKEY, JSON.stringify(data));
+          saveLocalCache();
         }
       }
     }
@@ -3134,20 +3197,14 @@ init();
 // ── Salvar no localStorage ao fechar/recarregar (garante cache local) ────────
 // FIX #2: Salvamento imediato em eventos críticos — nunca dependendo só do debounce
 window.addEventListener('beforeunload', function(e) {
-  try {
-    const payload = mkPayload();
-    localStorage.setItem(SKEY, JSON.stringify(payload));
-    saveToIndexedDB(payload); // IndexedDB também (assíncrono, best-effort)
-  } catch(err) {}
+  saveLocalCache();
+  saveToIndexedDB(mkLocalPayload()); // IndexedDB também (assíncrono, best-effort)
 });
 
 // FIX #2: Salvar quando aba fica oculta (usuário muda de aba ou minimiza)
 document.addEventListener('visibilitychange', function() {
   if (document.visibilityState === 'hidden') {
-    try {
-      const payload = mkPayload();
-      localStorage.setItem(SKEY, JSON.stringify(payload));
-    } catch(err) {}
+    saveLocalCache();
     // Tentar salvar na nuvem se houver alterações pendentes
     if (_pendingSaveCount > 0 && !_saving) {
       salvarDados(true);
@@ -3160,10 +3217,7 @@ document.addEventListener('visibilitychange', function() {
 
 // FIX #2: pagehide para iOS/Safari
 window.addEventListener('pagehide', function() {
-  try {
-    const payload = mkPayload();
-    localStorage.setItem(SKEY, JSON.stringify(payload));
-  } catch(err) {}
+  saveLocalCache();
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
