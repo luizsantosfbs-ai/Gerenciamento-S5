@@ -2,21 +2,60 @@
 <html lang="pt-BR"><head>
 <meta charset="UTF-8">
 <script>
+// ── Proteção do token — roda ANTES de qualquer outro script ──────────────────
 (function(){
   try {
-    var t = localStorage.getItem('natto-gist-cfg') || sessionStorage.getItem('natto-gist-cfg');
-    if (t) {
-      try { Object.defineProperty(window,'__natto_token_backup__',{value:t,writable:false,configurable:false}); } catch(e){}
+    var KEY = 'natto-gist-cfg';
+    var UKEY = 'natto-pa-s5-user';
+
+    // Tentar recuperar token de todos os lugares possíveis
+    function readToken() {
+      // 1. localStorage
+      try { var v = localStorage.getItem(KEY); if (v) return v; } catch(e) {}
+      // 2. sessionStorage
+      try { var v = sessionStorage.getItem(KEY); if (v) return v; } catch(e) {}
+      try { var v = sessionStorage.getItem(KEY+'-bkp'); if (v) return v; } catch(e) {}
+      // 3. Cookie
+      try {
+        var m = document.cookie.split(';').map(function(c){return c.trim();})
+          .filter(function(c){return c.indexOf(KEY+'=')===0;})[0];
+        if (m) return decodeURIComponent(m.split('=').slice(1).join('='));
+      } catch(e) {}
+      return null;
+    }
+
+    var token = readToken();
+    var user  = (function(){
+      try { return localStorage.getItem(UKEY) || sessionStorage.getItem(UKEY); } catch(e){ return null; }
+    })();
+
+    // Guardar em memória — imutável, nenhum script pode apagar
+    if (token) {
+      try { Object.defineProperty(window,'__natto_token_backup__',{value:token,writable:false,configurable:false}); } catch(e){}
+    }
+    if (user) {
+      try { Object.defineProperty(window,'__natto_user_backup__',{value:user,writable:false,configurable:false}); } catch(e){}
+    }
+
+    // Garantir que localStorage tem o token (caso restore script antigo apague)
+    // Usar MutationObserver não funciona aqui, mas podemos usar um getter interceptor
+    // Abordagem: re-escrever no localStorage APÓS qualquer script externo rodar
+    if (token) {
+      // Agendar restauração para depois que todos os scripts inline rodarem
       setTimeout(function(){
-        if (!localStorage.getItem('natto-gist-cfg')) localStorage.setItem('natto-gist-cfg', t);
+        try {
+          if (!localStorage.getItem(KEY)) {
+            localStorage.setItem(KEY, token);
+          }
+        } catch(e) {}
       }, 0);
     }
-  } catch(e){}
+  } catch(e) {}
 })();
 </script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Natto · Plano de Ação S5</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 :root{
   --g1:#007F38;--g2:#95C11F;--g1d:#005a28;--g1l:#e8f5ee;--g1m:#b8d9c5;
@@ -85,6 +124,8 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--g100);color
 .sync-ind.err{background:var(--redl);color:var(--red)}.sync-ind.syncing{background:var(--ambl);color:var(--amb)}.sync-ind.warn{background:#fff3cd;color:#856404}
 .sync-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
 .sync-ind.saving .sync-dot{animation:pulse .8s infinite}.sync-ind.syncing .sync-dot{animation:pulse .8s infinite}
+/* FIX #9: Indicadores adicionais */
+.sync-ind .sync-cnt{font-size:9px;opacity:.75;margin-left:2px;font-family:monospace}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 .ct{flex:1;overflow-y:auto;padding:.85rem;background:var(--g50)}
 
@@ -331,22 +372,6 @@ input[type=file]{display:none}
 .rpt-snapshot{display:none;background:var(--ambl);border:1px solid var(--amb);border-radius:6px;padding:.35rem .7rem;font-size:9.5px;color:var(--amb);font-weight:600;align-items:center;gap:5px}
 .rpt-snapshot.show{display:flex}
 
-/* ── Gist Setup Modal ─────────────────────────────────────────────────────── */
-.gist-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
-.gist-modal{background:var(--wh);border-radius:16px;padding:32px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
-.gist-modal h2{margin:0 0 6px;font-size:18px;color:var(--g1d)}
-.gist-modal p{margin:0 0 20px;font-size:13px;color:var(--g400);line-height:1.5}
-.gist-modal label{display:block;font-size:12px;font-weight:600;color:var(--g1d);margin-bottom:4px}
-.gist-modal input{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;margin-bottom:14px;font-family:monospace;color:#333}
-.gist-modal input:focus{outline:none;border-color:var(--g1)}
-.gist-modal .gist-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
-.gist-modal .btn-cancel{background:var(--g100);color:var(--g400);border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
-.gist-modal .btn-connect{background:var(--g1);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
-.gist-modal .btn-connect:hover{background:var(--g1d)}
-.gist-modal .gist-err{color:var(--red);font-size:12px;margin-top:-8px;margin-bottom:10px;display:none}
-.gist-modal .gist-steps{background:var(--g50);border-radius:8px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--g1d);line-height:1.8}
-.gist-modal .gist-steps a{color:var(--g1);text-decoration:none}
-.gist-modal .gist-steps a:hover{text-decoration:underline}
 
 /* ═══ HISTÓRICO DE OBSERVAÇÕES ═══ */
 .obs-hist{display:flex;flex-direction:column;gap:.45rem;margin-bottom:.65rem}
@@ -361,6 +386,29 @@ input[type=file]{display:none}
 .obs-add-area{background:var(--wh);border:1.5px solid var(--g200);border-radius:8px;overflow:hidden}
 .obs-add-area textarea{width:100%;box-sizing:border-box;padding:9px 11px;border:none;outline:none;font-size:12px;font-family:inherit;line-height:1.6;resize:vertical;color:var(--g900);min-height:70px;display:block}
 .obs-add-footer{display:flex;justify-content:flex-end;padding:6px 8px;background:var(--g50);border-top:1px solid var(--g200)}
+
+/* ── Gist Setup Modal ─────────────────────────────────────────────────────── */
+.gist-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px)}
+.gist-modal{background:var(--wh);border-radius:16px;padding:32px;max-width:500px;width:92%;box-shadow:0 20px 60px rgba(0,0,0,.3);max-height:90vh;overflow-y:auto}
+.gist-modal h2{margin:0 0 6px;font-size:18px;color:var(--g1d)}
+.gist-modal p{margin:0 0 20px;font-size:13px;color:var(--g400);line-height:1.5}
+.gist-modal label{display:block;font-size:12px;font-weight:600;color:var(--g1d);margin-bottom:4px}
+.gist-modal input{width:100%;box-sizing:border-box;padding:10px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:13px;margin-bottom:14px;font-family:monospace;color:#333}
+.gist-modal input:focus{outline:none;border-color:var(--g1);box-shadow:0 0 0 3px rgba(0,127,56,.1)}
+.gist-modal .gist-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px;flex-wrap:wrap}
+.gist-modal .btn-cancel{background:var(--g100);color:var(--g400);border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.gist-modal .btn-connect{background:var(--g1);color:#fff;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+.gist-modal .btn-connect:hover{background:var(--g1d)}
+.gist-modal .gist-err{color:var(--red);font-size:12px;margin-top:-8px;margin-bottom:10px;display:none;padding:8px 10px;background:var(--redl);border-radius:6px}
+.gist-modal .gist-steps{background:var(--g50);border-radius:8px;padding:12px 16px;margin-bottom:18px;font-size:12px;color:var(--g1d);line-height:1.8}
+.gist-modal .gist-steps a{color:var(--g1);text-decoration:none;font-weight:600}
+.gist-modal .gist-steps a:hover{text-decoration:underline}
+.gist-modal .gist-tip{background:var(--ambl);border:1px solid #f5deb5;border-radius:6px;padding:10px 12px;font-size:11.5px;color:var(--amb);margin-bottom:14px;line-height:1.5}
+
+@keyframes pulse {
+  0%,100% { opacity:1; }
+  50%      { opacity:.55; }
+}
 </style>
 </head>
 <body>
@@ -392,51 +440,25 @@ input[type=file]{display:none}
       Importar Planilha (.xlsm / .xlsx)
     </button>
 
-    <button class="bimp bimp-full" id="save-file-btn" onclick="saveToFile()" title="Gera um novo arquivo HTML com todas as edições e dados embutidos — pronto para compartilhar" style="margin-bottom: 0.3rem; border-color: rgba(149, 193, 31, 0.35); font-weight: 700;">💾 Salvar no Arquivo</button>
+    <button class="bimp bimp-full" id="save-file-btn" onclick="salvarDados(false)" title="Salvar todas as alterações no Gist agora" style="margin-bottom: 0.3rem; border-color: rgba(149, 193, 31, 0.35); font-weight: 700;">☁ Salvar na Nuvem</button>
+    <button class="sb-btn" onclick="carregarDados()" title="Buscar a versão mais recente salva por outros colaboradores" style="margin-bottom:.3rem;background:rgba(255,255,255,.07);font-size:10px;border-color:rgba(149,193,31,.25)">🔄 Atualizar do Gist</button>
     <input class="sx" placeholder="🔍 Buscar plano ou responsável..." id="sbox" oninput="renderSB()">
   </div>
   <div class="sb-sec">
     <div class="sb-sec-ttl">Filtrar por setor</div>
-    <div class="chips" id="chips"><div class="chip" onclick="setSetor('Controle de Qualidade')"><span>Controle de Qualidade</span><span class="chip-cnt">11</span></div><div class="chip" onclick="setSetor('PCP')"><span>PCP</span><span class="chip-cnt">9</span></div><div class="chip" onclick="setSetor('Administração Produção')"><span>Administração Produção</span><span class="chip-cnt">8</span></div><div class="chip" onclick="setSetor('Manutenção')"><span>Manutenção</span><span class="chip-cnt">8</span></div><div class="chip" onclick="setSetor('TI')"><span>TI</span><span class="chip-cnt">7</span></div><div class="chip" onclick="setSetor('Controladoria')"><span>Controladoria</span><span class="chip-cnt">7</span></div><div class="chip" onclick="setSetor('Processos')"><span>Processos</span><span class="chip-cnt">6</span></div><div class="chip" onclick="setSetor('GG')"><span>GG</span><span class="chip-cnt">1</span></div><div class="chip" onclick="setSetor('P&amp;D')"><span>P&amp;D</span><span class="chip-cnt">1</span></div><div class="chip" onclick="setSetor('Produção')"><span>Produção</span><span class="chip-cnt">1</span></div></div>
+    <div class="chips" id="chips"><div class="chip on" onclick="setSetor('Controle de Qualidade')"><span>Controle de Qualidade</span><span class="chip-cnt">11</span></div><div class="chip" onclick="setSetor('PCP')"><span>PCP</span><span class="chip-cnt">9</span></div><div class="chip" onclick="setSetor('Administração Produção')"><span>Administração Produção</span><span class="chip-cnt">8</span></div><div class="chip" onclick="setSetor('Manutenção')"><span>Manutenção</span><span class="chip-cnt">8</span></div><div class="chip" onclick="setSetor('TI')"><span>TI</span><span class="chip-cnt">7</span></div><div class="chip" onclick="setSetor('Controladoria')"><span>Controladoria</span><span class="chip-cnt">7</span></div><div class="chip" onclick="setSetor('Processos')"><span>Processos</span><span class="chip-cnt">6</span></div><div class="chip" onclick="setSetor('GG')"><span>GG</span><span class="chip-cnt">1</span></div><div class="chip" onclick="setSetor('P&amp;D')"><span>P&amp;D</span><span class="chip-cnt">1</span></div><div class="chip" onclick="setSetor('Produção')"><span>Produção</span><span class="chip-cnt">1</span></div></div>
   </div>
   <div class="sb-sec">
     <div class="sb-sec-ttl">Filtrar por processo</div>
     <div class="chips" id="proc-chips"><div class="chip" onclick="setProc('S5')"><span>S5</span><span class="chip-cnt">25</span></div></div>
   </div>
-  <div class="plist" id="plist"><div class="pi" onclick="openPlan('mp76t47d9rovwz4026r')">
+  <div class="plist" id="plist"><div class="pi on" onclick="openPlan('mp76t47d9rovwz4026r')">
       <div style="display:flex;align-items:flex-start;gap:5px">
         <div class="rn ra" style="margin-top:1px">1</div>
         <div style="flex:1;min-width:0">
           <div class="pit">Ausência das LPPs das embalagem secundárias</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dzodb9lmraoa')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">2</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Ausência de padronização na configuração do DROP da classificadora</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dww6yf2ads3')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">3</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Ausência dos processos descritos do setor da Manutenção (Manutenção Preventiva / Calibração)</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 125</span>
           </div>
           <div class="gb"><div class="gba" style="width:100%"></div></div>
@@ -449,33 +471,6 @@ input[type=file]{display:none}
           <div class="pit">Criar trilha de treinamento para os colaboradores</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dq6qmd2zknxc')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">5</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Descumprimento da rotina de monitoramento dos rejeitos na VP por erro de leitura</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dazsiaxnu0q6')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">6</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Detector de metais fora de operação / Falsos alarmes no detector por uso de grampo (inteiro e galeto)</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 125</span>
           </div>
           <div class="gb"><div class="gba" style="width:100%"></div></div>
@@ -488,7 +483,6 @@ input[type=file]{display:none}
           <div class="pit">Disponibilizar as fichas técnicas da paletização ao chão de fábrica</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 125</span>
           </div>
           <div class="gb"><div class="gba" style="width:100%"></div></div>
@@ -501,20 +495,6 @@ input[type=file]{display:none}
           <div class="pit">Fragilidade na emissão de etiquetas (destino incorreto "Paulista ou Agreste")</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47d1yfuw3rm2na')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">9</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Frango inteiro fora da faixa do peso padrão</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 125</span>
           </div>
           <div class="gb"><div class="gba" style="width:100%"></div></div>
@@ -527,20 +507,6 @@ input[type=file]{display:none}
           <div class="pit">Leitores (Ágil) de etiqueta com possíveis falhas recorrentes (entrada do túnel) - Entrada do Túnel</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 125</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:100%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47de8i3m7y5j9r')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">11</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Política Interna do setor PCP</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 125</span>
           </div>
           <div class="gb"><div class="gba" style="width:100%"></div></div>
@@ -553,7 +519,6 @@ input[type=file]{display:none}
           <div class="pit">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - Saída do Túnel</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 100</span>
           </div>
           <div class="gb"><div class="gba" style="width:80%"></div></div>
@@ -566,7 +531,6 @@ input[type=file]{display:none}
           <div class="pit">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - Túnel de Congelamento</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 100</span>
           </div>
           <div class="gb"><div class="gba" style="width:80%"></div></div>
@@ -579,20 +543,6 @@ input[type=file]{display:none}
           <div class="pit">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - VP</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 100</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:80%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47danb253k2oao')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">15</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Avaliar otimização do fluxo da embalagem do frango Inteiro (Classificadora de carcaça)</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 100</span>
           </div>
           <div class="gb"><div class="gba" style="width:80%"></div></div>
@@ -605,33 +555,6 @@ input[type=file]{display:none}
           <div class="pit">Ausência de controle da acuracidade do estoque do túnel (Estoque EDATA x VP)</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 80</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:64%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dauq4vyjpr8')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">17</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Ausência de rastreabilidade e ajustes de caixas sem etiqueta na saída do túnel</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 80</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:64%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47d1guu9xku1im')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">18</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Cronoanálise da Embalagem Secundária e da Paletização (Produção x Ociosidade)</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 80</span>
           </div>
           <div class="gb"><div class="gba" style="width:64%"></div></div>
@@ -644,46 +567,6 @@ input[type=file]{display:none}
           <div class="pit">Fichas técnicas, POPs e fluxogramas inacessíveis no chão de fábrica</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 80</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:64%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47d2c7dye6reoe')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">20</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Impressora automática de etiquetas inativa na balança para sobras</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 80</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:64%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47d53wtngz7yb5')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">21</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Processo de configuração da tara da caixa não padronizada</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
-            <span class="gt">GUT 80</span>
-          </div>
-          <div class="gb"><div class="gba" style="width:64%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dsvpafkoxcua')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn ra" style="margin-top:1px">22</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Revisão e Elaboração dos processos (POPs e fluxogramas)</div>
-          <div class="pim">
-            <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 80</span>
           </div>
           <div class="gb"><div class="gba" style="width:64%"></div></div>
@@ -696,36 +579,9 @@ input[type=file]{display:none}
           <div class="pit">Rejeitos da VP não integrado 100% ao sistema EDATA (Principais apontamentos do rejeito)</div>
           <div class="pim">
             <span class="bx bxa">Alta</span>
-            
             <span class="gt">GUT 75</span>
           </div>
           <div class="gb"><div class="gba" style="width:60%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47dfn2yn4lajna')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn rm" style="margin-top:1px">24</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Treinamento de reciclagem do processo de tratativa das caixas sem etiqueta na saída do túnel</div>
-          <div class="pim">
-            <span class="bx bxm">Média</span>
-            
-            <span class="gt">GUT 64</span>
-          </div>
-          <div class="gb"><div class="gbm" style="width:51%"></div></div>
-        </div>
-      </div>
-    </div><div class="pi" onclick="openPlan('mp76t47d969vixz4bvj')">
-      <div style="display:flex;align-items:flex-start;gap:5px">
-        <div class="rn rm" style="margin-top:1px">25</div>
-        <div style="flex:1;min-width:0">
-          <div class="pit">Ausência de documentação da paletização mista</div>
-          <div class="pim">
-            <span class="bx bxm">Média</span>
-            
-            <span class="gt">GUT 48</span>
-          </div>
-          <div class="gb"><div class="gbm" style="width:38%"></div></div>
         </div>
       </div>
     </div></div>
@@ -735,538 +591,183 @@ input[type=file]{display:none}
 <div class="mn">
   <div class="tb">
     <div class="tbs"></div>
-    <div class="tbt" id="ttl">Painel Geral · Prioridade GUT</div>
-    <div class="tbag" id="tbag" style="display: none;">Setor: Controle de Qualidade</div>
-    <div class="sync-ind ok" id="sync-ind"><span class="sync-dot"></span><span id="sync-txt">☁ 25 planos carregados</span></div>
-    <button id="recfg-btn" onclick="showGistSetup(null, '🔑 Atualizar Token GitHub')" title="Token expirado ou inválido — clique para atualizar" style="align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; background: rgb(255, 243, 205); border: 1.5px solid rgb(245, 158, 11); color: rgb(146, 64, 14); font-size: 10px; font-weight: 700; cursor: pointer; white-space: nowrap; display: none;">🔑 Atualizar Token</button>
+    <div class="tbt" id="ttl">#1 · Ausência das LPPs das embalagem secundárias</div>
+    <div class="tbag" id="tbag" style="">Setor: Controle de Qualidade</div>
+    <div class="sync-ind saving" id="sync-ind"><span class="sync-dot"></span><span id="sync-txt">☁ Conectando...</span></div>
+    <button id="recfg-btn" onclick="showGistSetup(function(){ salvarDados(false); }, '🔑 Atualizar Token — suas edições serão enviadas ao reconectar')" title="Token expirado — clique para renovar. Seus dados estão salvos localmente." style="display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#fff3cd;border:1.5px solid #f59e0b;color:#92400e;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">🔑 Token expirado</button>
     <div class="user-badge" id="user-badge" onclick="promptUser()" title="Clique para alterar seu nome">👤 <span id="user-badge-txt">Luiz Santos</span></div>
   </div>
   <div class="ct" id="ct" style="">
-  <div class="kpi-section">
-    <div class="kpi-cards">
-      <div class="k-card" style="border-top-color:var(--g1)">
-        <div class="k-lbl">Total de planos</div>
-        <div class="k-val" style="color:var(--g1)">25</div>
-        <div class="k-sub">133 ações no total</div>
+  <div class="card">
+    <div class="card-ttl">Prioridade GUT</div>
+    <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.5rem">
+      <div class="rn ra" style="width:32px;height:32px;font-size:12px;font-weight:700">1</div>
+      <div>
+        <div style="font-size:13px;font-weight:700;color:var(--g1d)">Ranking 1º de 25</div>
+        <div style="font-size:10.5px;color:var(--g400)">Método · Score GUT: <strong>125</strong></div>
       </div>
-      <div class="k-card" style="border-top-color:var(--red)">
-        <div class="k-lbl">Prioridade Alta</div>
-        <div class="k-val" style="color:var(--red)">23</div>
-        <div class="k-sub">Score GUT ≥ 75</div>
+      <span class="gut-badge" style="margin-left:auto;font-size:11px;padding:3px 11px">Alta Prioridade</span>
+    </div>
+    <div class="db2"><div class="dba" style="width:100%"></div></div>
+    <div style="font-size:9.5px;color:var(--g400)">125/125 pontos GUT</div>
+  </div>
+
+  <div class="card">
+    <div class="card-ttl">Informações do Plano</div>
+    <div class="dg2" style="margin-bottom:.5rem">
+      <div class="df"><label>Empresa</label><span>Frigorífico Belo Jardim</span></div>
+      <div class="df"><label>Processo</label><span>S5</span></div>
+      <div class="df"><label>Responsável</label><span>MICKAEL ALVES COELHO SANTOS</span></div>
+      <div class="df"><label>Setor responsável</label><span>Controle de Qualidade</span></div>
+      <div class="df"><label>Prazo final</label><span>29/05/2026</span></div>
+      <div class="df"><label>Status</label><span class="st-badge stb-ea">Em andamento</span></div>
+    </div>
+    <div class="df" style="margin-top:.3rem">
+      <label>Setores envolvidos</label>
+      <div style="margin-top:3px;display:flex;gap:4px;flex-wrap:wrap">
+        <span class="pl-s">Controle de Qualidade</span>
       </div>
-      <div class="k-card" style="border-top-color:var(--amb)">
-        <div class="k-lbl">Prioridade Média</div>
-        <div class="k-val" style="color:var(--amb)">2</div>
-        <div class="k-sub">Score GUT 27–74</div>
-      </div>
-      <div class="k-card" style="border-top-color:var(--g2)">
-        <div class="k-lbl">Concluídos</div>
-        <div class="k-val" style="color:var(--g1d)">3</div>
-        <div class="k-sub">Em andamento: 14</div>
-      </div>
-      <div class="k-card" style="border-top-color:var(--red)">
-        <div class="k-lbl">Atrasados</div>
-        <div class="k-val" style="color:var(--red)">5</div>
-        <div class="k-sub">Prazo vencido</div>
-      </div>
-      <div class="k-card" style="border-top-color:#7c3aed">
-        <div class="k-lbl">Suspensos</div>
-        <div class="k-val" style="color:#7c3aed">0</div>
-        <div class="k-sub">Aguardando</div>
-      </div>
+    </div>
+    <div class="df" style="margin-top:.6rem">
+      <label>Observação</label>
+      <div style="margin-top:4px;font-size:12px;color:var(--g900);background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:10px 12px;line-height:1.6;white-space:pre-wrap">Pendente a elaboração das LPPs abaixo:
+
+Secundária de corte - SDC   
+FBJ.SDC.LPP.002 - Lição Ponto a Ponto - Cortes Resfriados Bandeja 700 g Caixa Papelão
+
+Secundária de Temperados - STP   
+FBJ.STP.LPP.003 - Lição Ponto a Ponto - Cortes Temperados Resfriados em Pacote 5 kg Caixa de Papelão 20 kg
+
+FBJ.STP.LPP.005 - Lição Ponto a Ponto - Cortes Temperados Resfriados em Pacote 5 kg  Caixa Plástica
+
+Secundária industrializados - SID   
+FBJ.SID.LPP.005 - Lição Ponto a Ponto - Bandejas de Linguiça Petisco em Caixa de Papelão 20 kg</div>
     </div>
   </div>
 
-  
-
-  <div class="fr">
-    <span class="fr-lbl">Status:</span>
-    <span class="fc on" onclick="setF('all')">Todos (25)</span>
-    <span class="fc" style="" onclick="setF('alta')">🔴 Alta (23)</span>
-    <span class="fc" style="" onclick="setF('media')">🟡 Média (2)</span>
-    <span class="fc" onclick="setF('em_andamento')">Em andamento (14)</span>
-    <span class="fc" onclick="setF('atrasado')">Atrasados (5)</span>
-    <span class="fc" onclick="setF('concluido')">Concluídos (3)</span>
-    <span class="fc" style="" onclick="setF('suspenso')">Suspensos (0)</span>
+  <div class="card">
+    <div class="card-ttl">Progresso · 0%</div>
+    <div class="prg-big"><div class="prg-fill pfl" style="width:0%"></div></div>
+    <div style="font-size:10.5px;color:var(--g400)">0 de 2 ação(ões) concluída(s)</div>
   </div>
 
-  <div class="pc palta" onclick="openPlan('mp76t47d9rovwz4026r')">
-      <div class="rna ra">1</div>
-      <div class="pch">
-        <div class="pct">Ausência das LPPs das embalagem secundárias</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
+  <div class="card">
+    <div class="card-ttl">Ações (2)
+      
+    </div>
+    <table class="at">
+      <thead><tr><th style="width:35%">Ação</th><th>Responsável</th><th>Setor</th><th>Prazo Prev.</th><th>Prazo Real.</th><th>Status</th></tr></thead>
+      <tbody><tr>
+          <td style="font-weight:500">1. Criação das LPP's das embalagens secundárias e envio para aprovação</td>
+          <td style="color:var(--g600);font-size:10.5px">MICKAEL ALVES COELHO SANTOS</td>
+          <td><span class="pl-s" style="font-size:9px">Controle de Qualidade</span></td>
+          <td style="font-size:10.5px">09/05/2026</td>
+          <td style="font-size:10px;padding:2px"><input type="date" class="ss" style="font-size:10px;padding:3px 4px;width:100%;min-width:100px" value="" onchange="updWhenReal('mp76t47d9rovwz4026r',0,this.value)" title="Prazo Realizado"></td>
+          <td><select class="ss" onchange="updAS('mp76t47d9rovwz4026r',0,this.value)">
+            <option value="aberto">Aberto</option>
+            <option value="em_andamento" selected="">Em andamento</option>
+            <option value="falta_prazo">Falta prazo</option>
+            <option value="atrasado">Atrasado</option>
+            <option value="concluido">Concluído</option>
+          </select></td>
+        </tr><tr>
+          <td style="font-weight:500">2. Disponibilizar as LPPs nas áreas</td>
+          <td style="color:var(--g600);font-size:10.5px">MICKAEL ALVES COELHO SANTOS</td>
+          <td><span class="pl-s" style="font-size:9px">Controle de Qualidade</span></td>
+          <td style="font-size:10.5px">29/05/2026</td>
+          <td style="font-size:10px;padding:2px"><input type="date" class="ss" style="font-size:10px;padding:3px 4px;width:100%;min-width:100px" value="" onchange="updWhenReal('mp76t47d9rovwz4026r',1,this.value)" title="Prazo Realizado"></td>
+          <td><select class="ss" onchange="updAS('mp76t47d9rovwz4026r',1,this.value)">
+            <option value="aberto">Aberto</option>
+            <option value="em_andamento" selected="">Em andamento</option>
+            <option value="falta_prazo">Falta prazo</option>
+            <option value="atrasado">Atrasado</option>
+            <option value="concluido">Concluído</option>
+          </select></td>
+        </tr></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="obs-card">
+    <div class="card-ttl">Observações (1)</div>
+    <div class="obs-hist">
+      <div class="obs-item">
+        <div class="obs-meta">
+          <span class="obs-author">👤 Luiz Santos</span>
+          <span class="obs-ts">29/05/2026 14:20</span>
         </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 2 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Controle de Qualidade</span>
-        <span class="pl-prazo">Prazo: 29/05/2026</span>
-        <span class="pl-ev">Evid.: 4</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dzodb9lmraoa')">
-      <div class="rna ra">2</div>
-      <div class="pch">
-        <div class="pct">Ausência de padronização na configuração do DROP da classificadora</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:14%"></div></div>
-        <span class="prg-pct">14% · 7 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span><span class="pl-s">Administração Produção</span><span class="pl-s">Processos</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dww6yf2ads3')">
-      <div class="rna ra">3</div>
-      <div class="pch">
-        <div class="pct">Ausência dos processos descritos do setor da Manutenção (Manutenção Preventiva / Calibração)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-co">Concluído</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfh" style="width:100%"></div></div>
-        <span class="prg-pct">100% · 1 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Manutenção</span>
-        <span class="pl-prazo">Prazo: 02/05/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp7e5rmt89ahd4uimyp')">
-      <div class="rna ra">4</div>
-      <div class="pch">
-        <div class="pct">Criar trilha de treinamento para os colaboradores</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Aberto</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 9 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">—</span>
-        <span class="pl-s">GG</span><span class="pl-s">PCP</span><span class="pl-s">Administração Produção</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dq6qmd2zknxc')">
-      <div class="rna ra">5</div>
-      <div class="pch">
-        <div class="pct">Descumprimento da rotina de monitoramento dos rejeitos na VP por erro de leitura</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 1 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Mão de obra</span>
-        <span class="pl-s">Administração Produção</span>
-        <span class="pl-prazo">Prazo: 29/05/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dazsiaxnu0q6')">
-      <div class="rna ra">6</div>
-      <div class="pch">
-        <div class="pct">Detector de metais fora de operação / Falsos alarmes no detector por uso de grampo (inteiro e galeto)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 4 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Máquina</span>
-        <span class="pl-s">Manutenção</span>
-        <span class="pl-prazo">Prazo: 27/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp7e5rmtt2p99w042xr')">
-      <div class="rna ra">7</div>
-      <div class="pch">
-        <div class="pct">Disponibilizar as fichas técnicas da paletização ao chão de fábrica</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Aberto</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 9 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">—</span>
-        <span class="pl-s">P&amp;D</span><span class="pl-s">Controle de Qualidade</span><span class="pl-s">Processos</span>
-        <span class="pl-prazo">Sem prazo</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dy2jg0fzjvi')">
-      <div class="rna ra">8</div>
-      <div class="pch">
-        <div class="pct">Fragilidade na emissão de etiquetas (destino incorreto "Paulista ou Agreste")</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 7 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">—</span>
-        <span class="pl-s">PCP</span><span class="pl-s">Controle de Qualidade</span><span class="pl-s">Administração Produção</span>
-        <span class="pl-prazo">Prazo: 22/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47d1yfuw3rm2na')">
-      <div class="rna ra">9</div>
-      <div class="pch">
-        <div class="pct">Frango inteiro fora da faixa do peso padrão</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:20%"></div></div>
-        <span class="prg-pct">20% · 5 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span>
-        <span class="pl-prazo">Prazo: 05/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dg2nwoti3ras')">
-      <div class="rna ra">10</div>
-      <div class="pch">
-        <div class="pct">Leitores (Ágil) de etiqueta com possíveis falhas recorrentes (entrada do túnel) - Entrada do Túnel</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-at">Atrasado</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:17%"></div></div>
-        <span class="prg-pct">17% · 6 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Máquina</span>
-        <span class="pl-s">Manutenção</span><span class="pl-s">TI</span><span class="pl-s">Controladoria</span>
-        <span class="pl-prazo">Prazo: 19/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47de8i3m7y5j9r')">
-      <div class="rna ra">11</div>
-      <div class="pch">
-        <div class="pct">Política Interna do setor PCP</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 125</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:17%"></div></div>
-        <span class="prg-pct">17% · 6 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47ddkyoibzb0ca')">
-      <div class="rna ra">12</div>
-      <div class="pch">
-        <div class="pct">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - Saída do Túnel</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 100</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:29%"></div></div>
-        <span class="prg-pct">29% · 7 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Medida</span>
-        <span class="pl-s">Manutenção</span><span class="pl-s">TI</span><span class="pl-s">Controladoria</span>
-        <span class="pl-prazo">Prazo: 19/06/2026</span>
-        <span class="pl-ev">Evid.: 2</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dpmnsgfxwd0s')">
-      <div class="rna ra">13</div>
-      <div class="pch">
-        <div class="pct">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - Túnel de Congelamento</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 100</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:14%"></div></div>
-        <span class="prg-pct">14% · 7 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Medida</span>
-        <span class="pl-s">Manutenção</span><span class="pl-s">TI</span><span class="pl-s">Controladoria</span>
-        <span class="pl-prazo">Prazo: 19/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dvqv31c3z91l')">
-      <div class="rna ra">14</div>
-      <div class="pch">
-        <div class="pct">Ausência de monitoramento dos dados/indicadores dos equipamentos (Gestão à Vista) - VP</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 100</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:33%"></div></div>
-        <span class="prg-pct">33% · 6 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Medida</span>
-        <span class="pl-s">Manutenção</span><span class="pl-s">TI</span><span class="pl-s">Controladoria</span>
-        <span class="pl-prazo">Prazo: 19/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47danb253k2oao')">
-      <div class="rna ra">15</div>
-      <div class="pch">
-        <div class="pct">Avaliar otimização do fluxo da embalagem do frango Inteiro (Classificadora de carcaça)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 100</span>
-          <span class="st-badge stb-ea">Aberto</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 0 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Manutenção</span>
-        <span class="pl-prazo">Sem prazo</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47d92qflvliwii')">
-      <div class="rna ra">16</div>
-      <div class="pch">
-        <div class="pct">Ausência de controle da acuracidade do estoque do túnel (Estoque EDATA x VP)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-at">Atrasado</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfm" style="width:50%"></div></div>
-        <span class="prg-pct">50% · 2 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Medida</span>
-        <span class="pl-s">Controle de Qualidade</span><span class="pl-s">Controladoria</span>
-        <span class="pl-prazo">Prazo: 15/05/2026</span>
-        <span class="pl-ev">Evid.: 1</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dauq4vyjpr8')">
-      <div class="rna ra">17</div>
-      <div class="pch">
-        <div class="pct">Ausência de rastreabilidade e ajustes de caixas sem etiqueta na saída do túnel</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:25%"></div></div>
-        <span class="prg-pct">25% · 8 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Controladoria</span><span class="pl-s">TI</span><span class="pl-s">Produção</span>
-        <span class="pl-prazo">Prazo: 12/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47d1guu9xku1im')">
-      <div class="rna ra">18</div>
-      <div class="pch">
-        <div class="pct">Cronoanálise da Embalagem Secundária e da Paletização (Produção x Ociosidade)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-co">Concluído</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfh" style="width:100%"></div></div>
-        <span class="prg-pct">100% · 1 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Medida</span>
-        <span class="pl-s">PCP</span>
-        <span class="pl-prazo">Prazo: 06/05/2026</span>
-        <span class="pl-ev">Evid.: 3</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dvnvto0kjc8')">
-      <div class="rna ra">19</div>
-      <div class="pch">
-        <div class="pct">Fichas técnicas, POPs e fluxogramas inacessíveis no chão de fábrica</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-co">Concluído</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfh" style="width:100%"></div></div>
-        <span class="prg-pct">100% · 1 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Controle de Qualidade</span>
-        <span class="pl-prazo">Prazo: 09/05/2026</span>
-        <span class="pl-ev">Evid.: 2</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47d2c7dye6reoe')">
-      <div class="rna ra">20</div>
-      <div class="pch">
-        <div class="pct">Impressora automática de etiquetas inativa na balança para sobras</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-at">Atrasado</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 4 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Máquina</span>
-        <span class="pl-s">TI</span>
-        <span class="pl-prazo">Prazo: 30/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47d53wtngz7yb5')">
-      <div class="rna ra">21</div>
-      <div class="pch">
-        <div class="pct">Processo de configuração da tara da caixa não padronizada</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:20%"></div></div>
-        <span class="prg-pct">20% · 5 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span><span class="pl-s">Administração Produção</span><span class="pl-s">Processos</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dsvpafkoxcua')">
-      <div class="rna ra">22</div>
-      <div class="pch">
-        <div class="pct">Revisão e Elaboração dos processos (POPs e fluxogramas)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 80</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:29%"></div></div>
-        <span class="prg-pct">29% · 21 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span><span class="pl-s">Administração Produção</span><span class="pl-s">Processos</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc palta" onclick="openPlan('mp76t47dcor9z5lnjw')">
-      <div class="rna ra">23</div>
-      <div class="pch">
-        <div class="pct">Rejeitos da VP não integrado 100% ao sistema EDATA (Principais apontamentos do rejeito)</div>
-        <div class="pc-badges">
-          <span class="gut-badge">GUT 75</span>
-          <span class="st-badge stb-at">Atrasado</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfm" style="width:50%"></div></div>
-        <span class="prg-pct">50% · 2 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Máquina</span>
-        <span class="pl-s">TI</span><span class="pl-s">Controle de Qualidade</span>
-        <span class="pl-prazo">Prazo: 15/05/2026</span>
-        <span class="pl-ev">Evid.: 1</span>
-      </div>
-    </div><div class="pc pmedia" onclick="openPlan('mp76t47dfn2yn4lajna')">
-      <div class="rna rm">24</div>
-      <div class="pch">
-        <div class="pct">Treinamento de reciclagem do processo de tratativa das caixas sem etiqueta na saída do túnel</div>
-        <div class="pc-badges">
-          <span class="gut-badge am">GUT 64</span>
-          <span class="st-badge stb-at">Atrasado</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 7 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">Controladoria</span><span class="pl-s">Processos</span><span class="pl-s">Administração Produção</span>
-        <span class="pl-prazo">Prazo: 05/06/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
-      </div>
-    </div><div class="pc pmedia" onclick="openPlan('mp76t47d969vixz4bvj')">
-      <div class="rna rm">25</div>
-      <div class="pch">
-        <div class="pct">Ausência de documentação da paletização mista</div>
-        <div class="pc-badges">
-          <span class="gut-badge am">GUT 48</span>
-          <span class="st-badge stb-ea">Em andamento</span>
-        </div>
-      </div>
-      <div class="pc-prg-row">
-        <div class="prg-bar"><div class="prg-fill pfl" style="width:0%"></div></div>
-        <span class="prg-pct">0% · 5 ação(ões)</span>
-      </div>
-      <div class="pcf">
-        <span class="pl">Método</span>
-        <span class="pl-s">PCP</span><span class="pl-s">Administração Produção</span><span class="pl-s">Processos</span>
-        <span class="pl-prazo">Prazo: 31/07/2026</span>
-        <span class="pl-ev">Evid.: 0</span>
+        <div class="obs-txt">Pendente a elaboração das LPPs abaixo:
+
+Secundária de corte - SDC   
+FBJ.SDC.LPP.002 - Lição Ponto a Ponto - Cortes Resfriados Bandeja 700 g Caixa Papelão
+
+Secundária de Temperados - STP   
+FBJ.STP.LPP.003 - Lição Ponto a Ponto - Cortes Temperados Resfriados em Pacote 5 kg Caixa de Papelão 20 kg
+
+FBJ.STP.LPP.005 - Lição Ponto a Ponto - Cortes Temperados Resfriados em Pacote 5 kg  Caixa Plástica
+
+Secundária industrializados - SID   
+FBJ.SID.LPP.005 - Lição Ponto a Ponto - Bandejas de Linguiça Petisco em Caixa de Papelão 20 kg</div>
+        <button class="obs-del" onclick="delObsItem('mp76t47d9rovwz4026r',0)" title="Remover esta observação">×</button>
+      </div>
+    </div>
+    <div class="obs-add-area">
+      <textarea id="obs-inline-mp76t47d9rovwz4026r" rows="3" placeholder="Nova observação..."
+        onfocus="this.style.borderColor='var(--g1)'"
+        onblur="this.style.borderColor=''"></textarea>
+      <div class="obs-add-footer">
+        <button class="bs" style="font-size:11px;padding:6px 16px" onclick="saveObsInline('mp76t47d9rovwz4026r')">
+          + Adicionar
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-ttl">Evidências (4)</div>
+    <div class="el">
+    <div class="ei">
+      <span class="ei-icon" onclick="openEv('mp76t47d9rovwz4026r',0)">🖼️</span>
+      <span class="en" onclick="openEv('mp76t47d9rovwz4026r',0)" title="Clique para abrir">WhatsApp Image 2026-05-15 at 14.55.20.jpeg</span>
+      <span class="ei-sz">149.2KB</span>
+      <div class="ei-btns">
+        <button class="ei-btn ei-dl" onclick="downloadEv('mp76t47d9rovwz4026r',0)">⬇ Baixar</button>
+        <button class="ei-btn ei-rm" onclick="remEv('mp76t47d9rovwz4026r',0)">×</button>
+      </div>
+    </div>
+    <div class="ei">
+      <span class="ei-icon" onclick="openEv('mp76t47d9rovwz4026r',1)">🖼️</span>
+      <span class="en" onclick="openEv('mp76t47d9rovwz4026r',1)" title="Clique para abrir">WhatsApp Image 2026-05-15 at 14.55.19.jpeg</span>
+      <span class="ei-sz">135.1KB</span>
+      <div class="ei-btns">
+        <button class="ei-btn ei-dl" onclick="downloadEv('mp76t47d9rovwz4026r',1)">⬇ Baixar</button>
+        <button class="ei-btn ei-rm" onclick="remEv('mp76t47d9rovwz4026r',1)">×</button>
+      </div>
+    </div>
+    <div class="ei">
+      <span class="ei-icon" onclick="openEv('mp76t47d9rovwz4026r',2)">📄</span>
+      <span class="en" onclick="openEv('mp76t47d9rovwz4026r',2)" title="Clique para abrir">FBJ.CQL.LPP.003 - Lição Ponto a Ponto - Embalagem secundária - Frango a Passarinho.pdf</span>
+      <span class="ei-sz">690.8KB</span>
+      <div class="ei-btns">
+        <button class="ei-btn ei-dl" onclick="downloadEv('mp76t47d9rovwz4026r',2)">⬇ Baixar</button>
+        <button class="ei-btn ei-rm" onclick="remEv('mp76t47d9rovwz4026r',2)">×</button>
+      </div>
+    </div>
+    <div class="ei">
+      <span class="ei-icon" onclick="openEv('mp76t47d9rovwz4026r',3)">📄</span>
+      <span class="en" onclick="openEv('mp76t47d9rovwz4026r',3)" title="Clique para abrir">FBJ.CQL.LPP.002 - Lição Ponto a Ponto - Embalagem secundária - Bandeja de peito.pdf</span>
+      <span class="ei-sz">407.5KB</span>
+      <div class="ei-btns">
+        <button class="ei-btn ei-dl" onclick="downloadEv('mp76t47d9rovwz4026r',3)">⬇ Baixar</button>
+        <button class="ei-btn ei-rm" onclick="remEv('mp76t47d9rovwz4026r',3)">×</button>
       </div>
     </div></div>
-  <div class="fb" id="fb" style="display: none;">
+    <div class="ez" onclick="trigUp('mp76t47d9rovwz4026r')" ondragover="event.preventDefault();this.classList.add('dg')" ondragleave="this.classList.remove('dg')" ondrop="hDrop(event,'mp76t47d9rovwz4026r')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="margin:0 auto 4px;display:block">
+        <path d="M12 3v13M7 8l5-5 5 5M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="#007F38" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      <p>Clique ou arraste arquivos para anexar evidências</p>
+    </div>
+  </div></div>
+  <div class="fb" id="fb" style="display: flex;">
     <button class="bc" onclick="delPlan('mp76t47d9rovwz4026r')">Excluir</button>
     <button class="bc" onclick="showForm(true)">Editar</button>
     <button class="bs" onclick="showDash()">← Painel</button></div>
@@ -1394,37 +895,96 @@ const RAW={};
 
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PERSISTÊNCIA — GitHub Gist (sincronização em tempo real entre usuários)
+// PERSISTÊNCIA — GitHub Gist (nuvem) + localStorage (cache local)
 // ══════════════════════════════════════════════════════════════════════════════
-const SKEY             = 'natto-pa-s5';
-const GIST_FILENAME    = 'natto-pa-s5.json';
-const GIST_ATTACH_FILE = 'natto-pa-s5-attach.json';
-const CFG_KEY          = 'natto-gist-cfg';
-const GIST_ID          = '819172f79e3cf13ee43ca95c145595e9';
-
-// Credenciais carregadas do localStorage (nunca embutidas no código)
-let _attachments = {}; // { attId: { name, type, size, data } }
+const SKEY              = 'natto-pa-s5';
+const GIST_FILENAME      = 'natto-pa-s5.json';
+const GIST_ATTACH_FILE   = 'natto-pa-s5-attachments.json';
+const CFG_KEY      = 'natto-gist-cfg';
+const GIST_ID      = '819172f79e3cf13ee43ca95c145595e9'; // ID fixo — não é segredo
+// Repositório GitHub para armazenar anexos (arquivos grandes)
+const GH_OWNER     = 'luizsantosfbs-ai';
+const GH_REPO      = 'Gerenciamento-S5';
+const GH_BRANCH    = 'main';
+const GH_ATTACH_PATH = 'anexos'; // pasta dentro do repositório
 
 function getGistCfg() {
-  try {
-    const s = JSON.parse(localStorage.getItem(CFG_KEY) || 'null');
-    if (s && s.token) return { id: GIST_ID, token: s.token };
-    return null;
-  } catch(e) { return null; }
+  // Buscar token em todos os lugares onde foi salvo
+  const sources = [
+    () => localStorage.getItem(CFG_KEY),
+    () => sessionStorage.getItem(CFG_KEY),
+    () => sessionStorage.getItem(CFG_KEY + '-bkp'),
+    () => {
+      // Ler do cookie
+      const m = document.cookie.split(';').map(c => c.trim())
+        .find(c => c.startsWith(CFG_KEY + '='));
+      return m ? decodeURIComponent(m.split('=').slice(1).join('=')) : null;
+    },
+    () => window.__natto_token_backup__ || null,
+  ];
+  for (const src of sources) {
+    try {
+      const raw = src();
+      if (!raw) continue;
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (parsed && parsed.token && parsed.token.length > 10) {
+        // Re-salvar em todos os lugares se encontrou em algum (auto-reparo)
+        const val = JSON.stringify({ id: GIST_ID, token: parsed.token });
+        try { localStorage.setItem(CFG_KEY, val); } catch(e) {}
+        try { sessionStorage.setItem(CFG_KEY, val); } catch(e) {}
+        return { id: GIST_ID, token: parsed.token };
+      }
+    } catch(e) {}
+  }
+  return null;
 }
 function saveGistCfg(id, token) {
   const val = JSON.stringify({ id: GIST_ID, token });
+  // Salvar em 3 lugares para máxima resiliência
   try { localStorage.setItem(CFG_KEY, val); } catch(e) {}
   try { sessionStorage.setItem(CFG_KEY, val); } catch(e) {}
+  try { sessionStorage.setItem(CFG_KEY + '-bkp', val); } catch(e) {}
+  // Cookie de sessão como último recurso (sem expiração = sessão do browser)
+  try {
+    document.cookie = CFG_KEY + '=' + encodeURIComponent(val) + '; path=/; SameSite=Strict';
+  } catch(e) {}
 }
-function clearGistCfg() {
-  localStorage.removeItem(CFG_KEY);
-}
+function clearGistCfg() { localStorage.removeItem(CFG_KEY); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SISTEMA DE AUTOSAVE COM FILA — garante que nenhuma alteração é perdida
+// ══════════════════════════════════════════════════════════════════════════════
 let autoSaveTimer = null;
 let _saving = false;
+let _hasPendingSave = false;   // FIX #1: fila de salvamento
+let _pendingSaveCount = 0;     // contador de alterações pendentes
+let _lastSavedAt = null;       // timestamp do último salvamento
+let _attachments = {};         // { id: { name, type, size, data } }
+
+// FIX #9: Indicador de estado de sincronização melhorado
+function updateSyncBadge() {
+  const el = document.getElementById('sync-ind');
+  if (!el) return;
+  const pending = _pendingSaveCount;
+  const rb = document.getElementById('recfg-btn');
+  const hasPending = localStorage.getItem('natto-gist-pendente') === '1';
+  if (rb) rb.style.display = (hasPending) ? 'flex' : 'none';
+  // Exibir contagem pendente no indicador
+  const pendTxt = pending > 0 ? ` (${pending} pend.)` : '';
+  const t = document.getElementById('sync-txt');
+  if (t && el.classList.contains('ok') && _lastSavedAt) {
+    t.textContent = `☁ Salvo ${_lastSavedAt}${pendTxt}`;
+  }
+}
 
 // Serializar estado para salvar
 function mkPayload() {
+  // FIX #3: adicionar version, updatedAt, updatedBy para controle de conflitos
+  const prevPayload = (() => {
+    try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch(e) { return {}; }
+  })();
+  const newVersion = (prevPayload.version || 14) + 1;
+
   return {
     plans: plans.map(p => ({
       ...p,
@@ -1433,81 +993,187 @@ function mkPayload() {
         size:    e.size    || '',
         type:    e.type    || '',
         attId:   e.attId   || '',
-        dataUrl: ''  // base64 fica em arquivo separado
+        url:     e.url     || '',
+        dataUrl: ''          // nunca salvar base64 no arquivo principal
       })),
       obsLog: p.obsLog || []
     })),
     audit: loadAuditLog(),
     savedAt: new Date().toISOString(),
-    version: 14
+    version: newVersion,
+    updatedAt: new Date().toISOString(),
+    updatedBy: getUser()
   };
 }
 
 function mkAttachPayload() {
+  // Payload separado só com os base64 — salvo em arquivo separado no Gist
   return { attachments: _attachments };
 }
 
-// Auto-save com debounce de 3 s
+// FIX #1: Auto-save com fila — nenhuma alteração é perdida
 function scheduleAutoSave() {
+  _pendingSaveCount++;
+  setSyncState('warn', `🔵 ${_pendingSaveCount} alteração(ões) pendente(s)`);
+
+  // Salvar imediatamente no localStorage (nunca perde)
+  try {
+    const snapshot = mkPayload();
+    localStorage.setItem(SKEY, JSON.stringify(snapshot));
+    // FIX #5: também salvar no IndexedDB offline
+    saveToIndexedDB(snapshot);
+  } catch(e) {}
+
+  if (_saving) {
+    // Há um salvamento em andamento — marcar como pendente
+    _hasPendingSave = true;
+    return;
+  }
   if (autoSaveTimer) clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => salvarDados(true), 3000);
+  autoSaveTimer = setTimeout(() => salvarDados(true), 2000);
+}
+
+// FIX #2: Salvamento imediato em eventos críticos
+function saveImmediate(reason) {
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  _pendingSaveCount++;
+  try {
+    const snapshot = mkPayload();
+    localStorage.setItem(SKEY, JSON.stringify(snapshot));
+    saveToIndexedDB(snapshot);
+  } catch(e) {}
+  // Não chamar salvarDados se já está salvando
+  if (!_saving) {
+    salvarDados(true);
+  } else {
+    _hasPendingSave = true;
+  }
 }
 
 // ── SALVAR no GitHub Gist ─────────────────────────────────────────────────────
 async function salvarDados(silent = false) {
-  if (_saving) return;
+  if (_saving) {
+    // FIX #1: marcar pendente em vez de descartar
+    _hasPendingSave = true;
+    return;
+  }
   _saving = true;
+  _hasPendingSave = false;
 
-  // 1. Salvar no localStorage imediatamente
+  // Sempre salvar no localStorage primeiro (nunca perde dado)
   const payload = mkPayload();
   try { localStorage.setItem(SKEY, JSON.stringify(payload)); } catch(e) {}
+  try { saveToIndexedDB(payload); } catch(e) {}
 
   const cfg = getGistCfg();
-  if (!cfg) { _saving = false; showGistSetup(); return; }
+  if (!cfg) {
+    setSyncState('warn', '⚙ Configure a nuvem');
+    _saving = false;
+    // FIX #1: processar fila pendente mesmo sem nuvem
+    if (_hasPendingSave) setTimeout(() => salvarDados(true), 1000);
+    if (!silent) showGistSetup();
+    return;
+  }
 
-  setSyncState('saving', '☁ Salvando...');
+  setSyncState('saving', '🟡 Salvando...');
   try {
-    // 2. Enviar dados principais + attachments em um único PATCH
+    // FIX #3: Carregar versão remota para detectar conflito
+    let remoteVersion = null;
+    try {
+      const vCheck = await fetch('https://api.github.com/gists/' + GIST_ID, {
+        headers: { 'Authorization': 'token ' + cfg.token }
+      });
+      if (vCheck.ok) {
+        const vData = await vCheck.json();
+        const mainF = vData.files[GIST_FILENAME];
+        if (mainF && mainF.content) {
+          const parsed = JSON.parse(mainF.content);
+          remoteVersion = parsed.version;
+          const remoteUpdatedBy = parsed.updatedBy;
+          // Detectar conflito: versão remota é maior E foi modificada por outro usuário
+          if (remoteVersion > payload.version &&
+              remoteUpdatedBy && remoteUpdatedBy !== getUser()) {
+            _saving = false;
+            const doOverwrite = confirm(
+              `⚠️ Conflito de edição detectado!\n\n` +
+              `Este registro foi alterado por "${remoteUpdatedBy}" enquanto você editava.\n\n` +
+              `Deseja sobrescrever com suas alterações?\n` +
+              `(Cancelar para recarregar a versão mais recente)`
+            );
+            if (!doOverwrite) {
+              await carregarDados();
+              return;
+            }
+            auditLog('conflict', '(sistema)', `Conflito resolvido — sobrescrito por ${getUser()}`, `versão remota: ${remoteVersion}`);
+          }
+        }
+      }
+    } catch(ve) { /* ignora erro na verificação de versão */ }
+
+    const mainJson   = JSON.stringify(payload);
+    const attachJson = JSON.stringify(mkAttachPayload());
+
     const res = await fetch('https://api.github.com/gists/' + GIST_ID, {
       method: 'PATCH',
       headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         files: {
-          [GIST_FILENAME]:    { content: JSON.stringify(payload) },
-          [GIST_ATTACH_FILE]: { content: JSON.stringify(mkAttachPayload()) }
+          [GIST_FILENAME]:    { content: mainJson },
+          [GIST_ATTACH_FILE]: { content: attachJson }
         }
       })
     });
-    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token inválido'), {code: 401});
+
+    if (res.status === 401 || res.status === 403) {
+      throw Object.assign(new Error('Token inválido ou expirado'), {code: 401});
+    }
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
       try { const j = await res.json(); msg += ': ' + (j.message||''); } catch(je) {}
       throw new Error(msg);
     }
-    const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    setSyncState('ok', '☁ Salvo ' + ts);
+
+    _pendingSaveCount = 0;
+    _lastSavedAt = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    setSyncState('ok', `🟢 Salvo ${_lastSavedAt}`);
     localStorage.removeItem('natto-gist-pendente');
+    // FIX #5: limpar fila offline após sucesso
+    clearPendingSync();
     if (!silent) notify('☁ Salvo na nuvem!');
+
   } catch(e) {
     if (e.code === 401) {
-      setSyncState('err', '🔑 Token expirado');
+      setSyncState('err', '🔴 Token expirado');
+      localStorage.setItem('natto-gist-pendente', '1');
       if (!sessionStorage.getItem('natto-token-modal-shown')) {
         sessionStorage.setItem('natto-token-modal-shown', '1');
-        showGistSetup(() => { sessionStorage.removeItem('natto-token-modal-shown'); salvarDados(false); },
-          '🔑 Token expirado — renove para salvar na nuvem');
+        showGistSetup(
+          () => { sessionStorage.removeItem('natto-token-modal-shown'); salvarDados(false); },
+          '🔑 Token expirado — renove para salvar na nuvem'
+        );
       }
     } else {
-      setSyncState('warn', '⚠ Erro ao salvar');
-      notify('❌ Erro ao salvar: ' + (e.message||e), 'err');
+      setSyncState('warn', '⚠ Erro — dados salvos localmente');
+      notify('❌ Erro: ' + (e.message||String(e)), 'err');
+      localStorage.setItem('natto-gist-pendente', '1');
+      // FIX #5: armazenar na fila offline
+      addToPendingSync(payload);
       setTimeout(() => { if (!_saving) salvarDados(true); }, 15000);
     }
-  } finally { _saving = false; }
+  } finally {
+    _saving = false;
+    // FIX #1: processar próximo salvamento da fila
+    if (_hasPendingSave) {
+      _hasPendingSave = false;
+      setTimeout(() => salvarDados(true), 500);
+    }
+  }
 }
 function cloudSave(silent = false) { return salvarDados(silent); }
 
 // ── CARREGAR do GitHub Gist ───────────────────────────────────────────────────
 async function carregarDados() {
-  // Mostrar cache local imediatamente
+  // Mostrar cache local imediatamente (tela não fica em branco)
   try {
     const j = localStorage.getItem(SKEY);
     if (j) {
@@ -1518,33 +1184,45 @@ async function carregarDados() {
   } catch(e) {}
 
   const cfg = getGistCfg();
-  if (!cfg) { showGistSetup(); return; }
+  if (!cfg) {
+    setSyncState('warn', '⚙ Configure a nuvem');
+    setTimeout(showGistSetup, 600);
+    return;
+  }
 
   setSyncState('saving', '☁ Carregando...');
   try {
     const res = await fetch('https://api.github.com/gists/' + GIST_ID, {
       headers: { 'Authorization': 'token ' + cfg.token }
     });
-    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token inválido'), {code: 401});
+    if (res.status === 401 || res.status === 403) {
+      throw Object.assign(new Error('Token inválido'), {code: 401});
+    }
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
     const gist = await res.json();
 
-    // Ler arquivo principal — raw_url sem Authorization (CORS)
+    // Ler arquivo principal (raw_url se truncado pelo Gist)
     const mainFile = gist.files[GIST_FILENAME];
-    if (!mainFile) throw new Error('Arquivo não encontrado no Gist');
+    if (!mainFile) throw new Error('Arquivo de dados não encontrado no Gist');
     let mainText = mainFile.content || '';
     if (mainFile.truncated || mainText.length < 3) {
-      mainText = await (await fetch(mainFile.raw_url)).text();
+      // raw_url não aceita Authorization cross-origin — buscar sem header
+      const r = await fetch(mainFile.raw_url);
+      mainText = await r.text();
     }
     const data = JSON.parse(mainText);
 
-    // Ler arquivo de attachments — raw_url sem Authorization (CORS)
+    // Ler arquivo de attachments (raw_url se truncado)
     const attachFile = gist.files[GIST_ATTACH_FILE];
     if (attachFile) {
       let attachText = attachFile.content || '';
       if (attachFile.truncated || attachText.length < 3) {
-        try { attachText = await (await fetch(attachFile.raw_url)).text(); } catch(ae) {}
+        try {
+          // raw_url não aceita Authorization cross-origin — buscar sem header
+          const r = await fetch(attachFile.raw_url);
+          attachText = await r.text();
+        } catch(ae) {}
       }
       if (attachText.length > 2) {
         try {
@@ -1555,7 +1233,7 @@ async function carregarDados() {
     }
 
     data.attachments = _attachments;
-    try { localStorage.setItem(SKEY, JSON.stringify(data)); } catch(e) {}
+    localStorage.setItem(SKEY, JSON.stringify(data));
     localStorage.removeItem('natto-gist-pendente');
     restorePlans(data);
 
@@ -1569,11 +1247,12 @@ async function carregarDados() {
         sessionStorage.setItem('natto-token-modal-shown', '1');
         setTimeout(() => showGistSetup(
           () => { sessionStorage.removeItem('natto-token-modal-shown'); carregarDados(); },
-          '🔑 Token expirado'
+          '🔑 Token expirado — renove para continuar'
         ), 500);
       }
     } else {
       setSyncState('warn', '⚠ Sem conexão — cache local');
+      notify('⚠ ' + (e.message||String(e)), 'warn');
     }
   }
 }
@@ -1582,6 +1261,8 @@ function cloudLoad() { return carregarDados(); }
 // ── RESTAURAR estado ──────────────────────────────────────────────────────────
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
+  let _evidencesCleaned = false;
+  // Restaurar attachments
   if (data.attachments && typeof data.attachments === 'object') {
     _attachments = data.attachments;
   }
@@ -1592,6 +1273,25 @@ function restorePlans(data) {
     if (p.obs && !p.obsLog.length) {
       p.obsLog.push({ id: uid(), ts: new Date().toISOString(), user: 'Sistema', text: p.obs });
       p.obs = '';
+    }
+    // Limpar evidências com URL corrompida (owner errado, undefined, etc)
+    if (p.evidences) {
+      const before = p.evidences.length;
+      p.evidences = p.evidences.filter(e => {
+        if (!e.url && !e.dataUrl) return false; // sem fonte — remover
+        if (e.url) {
+          // Remover URLs que claramente não têm owner/repo corretos
+          // api.github.com/repos.arquivo = owner/repo virou parte do nome
+          // Remover qualquer URL apontando para API de repositório (não é acesso direto)
+          if (e.url.includes('api.github.com/repos') ||
+              e.url.includes('repos.') ||
+              e.url.includes('repos//')) {
+            return false; // URL de API de repositório — não funciona como download_url
+          }
+        }
+        return true;
+      });
+      if (p.evidences.length < before) _evidencesCleaned = true;
     }
   });
   // Restaurar audit log do Gist se presente
@@ -1637,6 +1337,128 @@ function handleJsonImport(file) {
 function openShare()  { document.getElementById('share-modal').style.display = 'flex'; }
 function closeShare() { document.getElementById('share-modal').style.display = 'none'; }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #5: RECUPERAÇÃO OFFLINE — IndexedDB + fila de sincronização
+// ══════════════════════════════════════════════════════════════════════════════
+const IDB_NAME = 'natto-pa-s5-idb';
+const IDB_STORE = 'snapshots';
+let _idb = null;
+
+function openIDB() {
+  return new Promise((resolve, reject) => {
+    if (_idb) return resolve(_idb);
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(IDB_STORE)) {
+        db.createObjectStore(IDB_STORE, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('pendingSync')) {
+        db.createObjectStore('pendingSync', { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveToIndexedDB(payload) {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ id: 'main', ...payload, idbSavedAt: new Date().toISOString() });
+  } catch(e) {}
+}
+
+async function loadFromIndexedDB() {
+  try {
+    const db = await openIDB();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get('main');
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    });
+  } catch(e) { return null; }
+}
+
+async function addToPendingSync(payload) {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction('pendingSync', 'readwrite');
+    tx.objectStore('pendingSync').add({ payload, queuedAt: new Date().toISOString() });
+  } catch(e) {}
+}
+
+async function clearPendingSync() {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction('pendingSync', 'readwrite');
+    tx.objectStore('pendingSync').clear();
+  } catch(e) {}
+}
+
+// FIX #5: Reconectar e sincronizar automaticamente
+window.addEventListener('online', () => {
+  setSyncState('saving', '🟡 Reconectando...');
+  notify('🌐 Conexão restaurada — sincronizando...');
+  setTimeout(() => salvarDados(false), 1000);
+});
+
+window.addEventListener('offline', () => {
+  setSyncState('warn', '⚠ Sem internet — salvando localmente');
+  notify('⚠ Sem conexão — dados salvos localmente', 'warn');
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FIX #4: UPLOAD DE EVIDÊNCIAS — limite 10MB, compressão, barra de progresso
+// ══════════════════════════════════════════════════════════════════════════════
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+function compressImage(dataUrl, maxDim, quality) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        const r = Math.min(maxDim / w, maxDim / h);
+        w = Math.round(w * r); h = Math.round(h * r);
+      }
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      // Tentar WebP primeiro, fallback para JPEG
+      try {
+        const webp = c.toDataURL('image/webp', quality);
+        if (webp && webp !== 'data:,') return resolve(webp);
+      } catch(e) {}
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+function showUploadProgress(pid, fileName, pct, done) {
+  const p = plans.find(x => x.id === pid);
+  const card = document.querySelector(`[onclick="trigUp('${pid}')"]`)?.closest('.card');
+  let bar = document.getElementById('upload-prog-' + pid);
+  if (!bar && card) {
+    bar = document.createElement('div');
+    bar.id = 'upload-prog-' + pid;
+    bar.style.cssText = 'margin:.4rem 0;padding:.4rem .6rem;background:var(--g1l);border:1px solid var(--g1m);border-radius:5px;font-size:10.5px;color:var(--g1d)';
+    card.querySelector('.ez').before(bar);
+  }
+  if (bar) {
+    if (done) { bar.remove(); return; }
+    bar.innerHTML = `<div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>📤 ${fileName}</span><span>${pct}%</span></div>
+      <div style="height:4px;background:var(--g1l);border-radius:3px;overflow:hidden">
+        <div style="height:100%;background:var(--g1);border-radius:3px;width:${pct}%;transition:width .2s"></div>
+      </div>`;
+  }
+}
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
@@ -1763,12 +1585,31 @@ function notify(m, type='ok') {
 
 function setSyncState(state, txt) {
   const el = document.getElementById('sync-ind');
-  const t = document.getElementById('sync-txt');
-  if (el) el.className = 'sync-ind ' + state;
-  if (t) t.textContent = txt;
-  // Mostrar/ocultar botão de reconfigurar token
+  const t  = document.getElementById('sync-txt');
   const rb = document.getElementById('recfg-btn');
-  if (rb) rb.style.display = (state === 'err' || state === 'warn') ? '' : 'none';
+  if (el) el.className = 'sync-ind ' + state;
+  if (t)  t.textContent = txt;
+  const hasPending = localStorage.getItem('natto-gist-pendente') === '1';
+  if (rb) rb.style.display = (state === 'err' || hasPending) ? 'flex' : 'none';
+  // FIX #9: mostrar data/hora da última sincronização
+  if (state === 'ok' && _lastSavedAt) {
+    if (t) t.textContent = `🟢 Salvo ${_lastSavedAt}`;
+  }
+}
+
+// ── Diagnóstico: expor estado do localStorage no console e na tela ───────────
+function diagToken() {
+  const raw    = localStorage.getItem('natto-gist-cfg');
+  const dados  = localStorage.getItem('natto-pa-s5');
+  const parsed = raw ? JSON.parse(raw) : null;
+  const token  = parsed && parsed.token ? parsed.token : '';
+  const msg = [
+    'natto-gist-cfg: ' + (raw ? 'PRESENTE' : 'AUSENTE'),
+    'token: '         + (token ? token.slice(0,10)+'...' : 'VAZIO'),
+    'natto-pa-s5: '   + (dados ? 'PRESENTE' : 'AUSENTE'),
+    'backup: '        + (window.__natto_token_backup__ ? 'SIM' : 'NÃO'),
+  ].join(' | ');
+  return msg;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2098,7 +1939,8 @@ function updAS(pid, idx, val) {
     auditLog('status', p.title,
       'Status da ação alterado: ' + sL(oldStatus) + ' → ' + sL(val),
       (p.actions[idx].what||'').slice(0,80));
-    renderDetail(); renderSB(); notify('Status atualizado'); scheduleAutoSave();
+    renderDetail(); renderSB(); notify('Status atualizado');
+    saveImmediate('status_change'); // FIX #2: salvar imediatamente ao mudar status
   }
 }
 function updWhenPrev(pid, idx, val) {
@@ -2109,7 +1951,8 @@ function updWhenPrev(pid, idx, val) {
     auditLog('prazo_prev', p.title,
       'Prazo previsto: ' + (oldVal ? fmt(oldVal) : '—') + ' → ' + (val ? fmt(val) : '—'),
       (p.actions[idx].what||'').slice(0,80));
-    scheduleAutoSave(); notify('Prazo previsto atualizado');
+    saveImmediate('prazo_prev'); // FIX #2: salvar imediatamente
+    notify('Prazo previsto atualizado');
   }
 }
 function updWhenReal(pid, idx, val) {
@@ -2120,30 +1963,59 @@ function updWhenReal(pid, idx, val) {
     auditLog('prazo', p.title,
       'Prazo realizado: ' + (oldVal ? fmt(oldVal) : '—') + ' → ' + (val ? fmt(val) : '—'),
       (p.actions[idx].what||'').slice(0,80));
-    scheduleAutoSave(); notify('Prazo realizado atualizado');
+    saveImmediate('prazo_real'); // FIX #2: salvar imediatamente
+    notify('Prazo realizado atualizado');
   }
 }
 function downloadEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
-  const data = (ev.attId && _attachments[ev.attId]) ? _attachments[ev.attId].data : ev.dataUrl;
-  if (!data) return notify('Arquivo não disponível para download', 'warn');
-  const a = document.createElement('a'); a.href=data; a.download=ev.name; a.click();
+  if (!ev) return notify('Arquivo não encontrado', 'warn');
+  const att = ev.attId ? _attachments[ev.attId] : null;
+  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
+  if (!target) return notify('Arquivo não disponível', 'warn');
+  const a = Object.assign(document.createElement('a'), {href: target, download: ev.name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 function openEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
-  const data = (ev.attId && _attachments[ev.attId]) ? _attachments[ev.attId].data : ev.dataUrl;
-  if (!data) return notify('Arquivo não disponível. Salve na nuvem e recarregue.', 'warn');
+  if (!ev) return notify('Arquivo não encontrado', 'warn');
+  // Buscar pelo attId no dicionário de attachments
+  const att = ev.attId ? _attachments[ev.attId] : null;
+  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
+  if (!target) return notify('Arquivo não disponível', 'warn');
+  // Abrir em nova aba
   const w = window.open('', '_blank');
-  if (w) w.document.write('<html><body style="margin:0"><iframe src="' + data + '" style="width:100%;height:100vh;border:none"></iframe></body></html>');
+  if (w) {
+    if (target.startsWith('data:')) {
+      w.document.write('<html><body style="margin:0"><iframe src="' + target + '" style="width:100%;height:100vh;border:none"></iframe></body></html>');
+    } else {
+      w.location.href = target;
+    }
+  }
 }
-function remEv(pid, idx) {
+async function remEv(pid, idx) {
   const p = plans.find(x => x.id===pid);
-  if (p) {
-    const ev = p.evidences[idx];
-    if (ev && ev.attId) delete _attachments[ev.attId];
-    p.evidences.splice(idx,1); renderDetail(); notify('Evidência removida'); scheduleAutoSave(); }
+  if (!p) return;
+  const ev = p.evidences[idx];
+  if (!ev) return;
+
+  // FIX #7: Confirmação obrigatória antes de excluir
+  const confirmed = confirm(
+    `⚠️ Excluir evidência?\n\n"${ev.name}"\n\nEsta ação não poderá ser desfeita.`
+  );
+  if (!confirmed) return;
+
+  // Remover do dicionário de attachments
+  if (ev.attId && _attachments[ev.attId]) {
+    delete _attachments[ev.attId];
+  }
+  p.evidences.splice(idx, 1);
+  auditLog('delete', p.title, `Evidência excluída: ${ev.name}`, `Tamanho: ${ev.size}`);
+  renderDetail();
+  notify('Evidência removida');
+  scheduleAutoSave();
 }
 function trigUp(pid) {
   const fi = document.getElementById('ev-fi');
@@ -2153,15 +2025,78 @@ function trigUp(pid) {
 function hDrop(e, pid) { e.preventDefault(); e.currentTarget.classList.remove('dg'); addFs(pid, [...e.dataTransfer.files]); }
 function addFs(pid, files) {
   const p = plans.find(x => x.id===pid); if (!p) return;
+
+  // FIX #4: Validar tamanho máximo (10 MB)
+  const oversized = files.filter(f => f.size > MAX_FILE_SIZE);
+  if (oversized.length) {
+    notify(`❌ ${oversized.length} arquivo(s) excedem 10 MB: ${oversized.map(f=>f.name).join(', ')}`, 'err');
+    files = files.filter(f => f.size <= MAX_FILE_SIZE);
+    if (!files.length) return;
+  }
+
+  notify('⏳ Processando ' + files.length + ' arquivo(s)...', 'ok');
   let done = 0;
+
   files.forEach(file => {
+    const isImage = file.type.startsWith('image/');
     const reader = new FileReader();
-    reader.onload = e => {
-      const attId = uid();
-      _attachments[attId] = { name: file.name, type: file.type, size: fSz(file.size), data: e.target.result };
-      p.evidences.push({ name: file.name, size: fSz(file.size), type: file.type, attId: attId, dataUrl: '' });
+
+    reader.onprogress = e => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 80);
+        showUploadProgress(pid, file.name, pct, false);
+      }
+    };
+
+    reader.onload = async e => {
+      try {
+        let dataUrl = e.target.result;
+        showUploadProgress(pid, file.name, 85, false);
+
+        // FIX #4: Comprimir imagens automaticamente
+        if (isImage) {
+          try {
+            dataUrl = await compressImage(dataUrl, 1920, 0.82);
+          } catch(ce) { /* manter original */ }
+        }
+        showUploadProgress(pid, file.name, 95, false);
+
+        const attId = uid();
+        const compressedSize = Math.round(dataUrl.length * 0.75);
+
+        _attachments[attId] = {
+          name: file.name,
+          type: isImage ? (dataUrl.startsWith('data:image/webp') ? 'image/webp' : file.type) : file.type,
+          size: fSz(compressedSize),
+          data: dataUrl
+        };
+
+        p.evidences.push({
+          name:  file.name,
+          size:  fSz(compressedSize),
+          type:  file.type,
+          attId: attId,
+          url:   null,
+          dataUrl: null
+        });
+
+        done++;
+        showUploadProgress(pid, file.name, 100, true);
+        if (done === files.length) {
+          renderDetail();
+          notify(`✅ ${files.length} arquivo(s) anexado(s)!`);
+          scheduleAutoSave();
+        }
+      } catch(err) {
+        notify('❌ Erro ao processar ' + file.name + ': ' + err.message, 'err');
+        showUploadProgress(pid, file.name, 0, true);
+        done++;
+      }
+    };
+    reader.onerror = () => {
+      notify('❌ Erro ao ler ' + file.name, 'err');
+      showUploadProgress(pid, file.name, 0, true);
       done++;
-      if (done===files.length) { renderDetail(); notify(files.length+' evidência(s) anexada(s)'); scheduleAutoSave(); }
     };
     reader.readAsDataURL(file);
   });
@@ -2172,7 +2107,7 @@ function evHtml(p) {
     <div class="ei">
       <span class="ei-icon" onclick="openEv('${p.id}',${i})">${fIcon(e.name)}</span>
       <span class="en" onclick="openEv('${p.id}',${i})" title="Clique para abrir">${e.name}</span>
-      <span class="ei-sz">${e.size}</span>
+      <span class="ei-sz">${(_attachments[e.attId]||{}).size||e.size}</span>
       <div class="ei-btns">
         <button class="ei-btn ei-dl" onclick="downloadEv('${p.id}',${i})">⬇ Baixar</button>
         <button class="ei-btn ei-rm" onclick="remEv('${p.id}',${i})">×</button>
@@ -2258,7 +2193,8 @@ function savePlan(id) {
   const sa = document.getElementById('fs').value.trim();
   const se = [...new Set(fActs.map(a => a.setor).filter(Boolean))];
   if (sa && !se.includes(sa)) se.unshift(sa);
-  const obsEl = document.getElementById('fobs');
+  const idx = plans.findIndex(x => x.id===id);
+  const existing = idx >= 0 ? plans[idx] : null;
   const p = {
     id, title:t, empresa:document.getElementById('fe').value.trim(),
     processo:document.getElementById('fp').value.trim()||'S5',
@@ -2266,10 +2202,9 @@ function savePlan(id) {
     deadline:document.getElementById('fd').value, status:document.getElementById('fst').value,
     gs, gp:document.getElementById('fgp').value, gc:'—',
     obs: '',
-    obsLog: (idx >= 0 ? plans[idx].obsLog : null) || [],
+    obsLog: (existing ? existing.obsLog : null) || [],
     actions:fActs.map(a => ({...a})), evidences:fEvs
   };
-  const idx = plans.findIndex(x => x.id===id);
   if (idx>=0) plans[idx]=p; else plans.unshift(p);
   plans.sort((a,b) => b.gs-a.gs || a.title.localeCompare(b.title));
   bRM(); cur=p; renderChips(); renderProcChips(); renderDetail(); renderSB();
@@ -2277,16 +2212,18 @@ function savePlan(id) {
   auditLog('plan', t,
     isNew ? 'Novo plano criado' : 'Plano editado',
     'Status: ' + sL(p.status) + ' · Score GUT: ' + gs);
-  notify('Plano salvo!'); scheduleAutoSave();
+  notify('Plano salvo!');
+  saveImmediate('plan_saved'); // FIX #2: salvar imediatamente
 }
 
 function delPlan(id) {
-  if (!confirm('Excluir este plano?')) return;
+  if (!confirm('Excluir este plano? Esta ação não poderá ser desfeita.')) return;
   const delP = plans.find(p => p.id===id);
   if (delP) auditLog('delete', delP.title, 'Plano excluído', delP.actions.length + ' ação(ões)');
   plans = plans.filter(p => p.id!==id); bRM(); cur=null;
   renderChips(); renderProcChips(); renderDash(); renderSB();
-  notify('Plano excluído'); scheduleAutoSave();
+  notify('Plano excluído');
+  saveImmediate('plan_deleted'); // FIX #2: salvar imediatamente
 }
 function showDash() { cur=null; filt='all'; renderDash(); renderSB(); updTopbar(); }
 
@@ -2525,7 +2462,7 @@ function applyImport() {
     'Planilha importada: +' + added + ' novos · ~' + updated + ' atualizados · −' + removed + ' removidos',
     newPlans.length + ' planos no total');
   notify(`✅ ${newPlans.length} planos: +${added} novos · ~${updated} atualizados · −${removed} removidos`);
-  scheduleAutoSave();
+  saveImmediate('import'); // FIX #2: salvar imediatamente após importação
 }
 
 // ── Estado do Report (variáveis declaradas globalmente) ──────────────────────
@@ -3021,12 +2958,13 @@ function auditLog(type, planTitle, description, extra) {
 // ── Abrir / fechar tela ───────────────────────────────────────────────────────
 function openAudit() {
   document.getElementById('audit-screen').classList.add('active');
-  // Recarregar do Gist para ver edições de outros usuários
+  // Recarregar do Gist para pegar edições de outros colaboradores
   const cfg = getGistCfg();
   if (cfg) {
     fetch('https://api.github.com/gists/' + cfg.id, {
       headers: { 'Authorization': 'token ' + cfg.token }
-    }).then(r => r.json()).then(gist => {
+    }).then(r => r.ok ? r.json() : null).then(gist => {
+      if (!gist) return;
       const file = gist.files[GIST_FILENAME];
       if (file && file.content) {
         try {
@@ -3119,10 +3057,49 @@ function renderAudit() {
 }
 
 function init() {
-  // Restaurar token se um restore script o apagou
+  // Restaurar token se um restore script antigo o apagou
   try {
-    if (window.__natto_token_backup__ && !localStorage.getItem(CFG_KEY)) {
-      localStorage.setItem(CFG_KEY, window.__natto_token_backup__);
+    if (window.__natto_token_backup__ && !localStorage.getItem('natto-gist-cfg')) {
+      localStorage.setItem('natto-gist-cfg', window.__natto_token_backup__);
+    }
+    if (window.__natto_user_backup__ && !localStorage.getItem('natto-pa-s5-user')) {
+      localStorage.setItem('natto-pa-s5-user', window.__natto_user_backup__);
+    }
+  } catch(e) {}
+
+  // FIX #5: Tentar recuperar do IndexedDB se localStorage estiver vazio/corrompido
+  const lsData = localStorage.getItem(SKEY);
+  if (!lsData) {
+    loadFromIndexedDB().then(idbData => {
+      if (idbData && idbData.plans && idbData.plans.length) {
+        console.log('[Natto] Recuperando dados do IndexedDB (offline backup)');
+        restorePlans(idbData);
+        notify('♻️ Dados recuperados do backup offline', 'warn');
+      }
+    }).catch(() => {});
+  }
+
+  // Limpar evidências corrompidas do cache local
+  try {
+    const cached = localStorage.getItem(SKEY);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data && data.plans) {
+        let cleaned = false;
+        data.plans.forEach(p => {
+          if (!p.evidences) return;
+          const before = p.evidences.length;
+          p.evidences = p.evidences.filter(e => {
+            if (!e.url && !e.dataUrl) return false;
+            if (e.url && (e.url.includes('/repos/') || e.url.includes('repos.'))) return false;
+            return true;
+          });
+          if (p.evidences.length < before) cleaned = true;
+        });
+        if (cleaned) {
+          localStorage.setItem(SKEY, JSON.stringify(data));
+        }
+      }
     }
   } catch(e) {}
 
@@ -3134,8 +3111,10 @@ function init() {
   updTopbar();
   carregarDados();
   if (!currentUser) setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 1200);
-  // Auto-refresh a cada 60s para colaboradores verem edições de outros
-  setInterval(() => { if (!_saving && document.visibilityState === 'visible') carregarDados(); }, 60000);
+  // Auto-refresh: recarregar do Gist a cada 60s para ver edições de outros colaboradores
+  setInterval(() => {
+    if (!_saving && document.visibilityState === 'visible') carregarDados();
+  }, 60000);
 }
 
 // ── Auto-refresh do report após importação ───────────────────────────────────
@@ -3152,35 +3131,234 @@ function init() {
 // ── Ponto de entrada ──────────────────────────────────────────────────────────
 init();
 
+// ── Salvar no localStorage ao fechar/recarregar (garante cache local) ────────
+// FIX #2: Salvamento imediato em eventos críticos — nunca dependendo só do debounce
+window.addEventListener('beforeunload', function(e) {
+  try {
+    const payload = mkPayload();
+    localStorage.setItem(SKEY, JSON.stringify(payload));
+    saveToIndexedDB(payload); // IndexedDB também (assíncrono, best-effort)
+  } catch(err) {}
+});
+
+// FIX #2: Salvar quando aba fica oculta (usuário muda de aba ou minimiza)
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') {
+    try {
+      const payload = mkPayload();
+      localStorage.setItem(SKEY, JSON.stringify(payload));
+    } catch(err) {}
+    // Tentar salvar na nuvem se houver alterações pendentes
+    if (_pendingSaveCount > 0 && !_saving) {
+      salvarDados(true);
+    }
+  } else if (document.visibilityState === 'visible') {
+    // Recarregar do Gist ao voltar para a aba
+    if (!_saving) setTimeout(() => carregarDados(), 1000);
+  }
+});
+
+// FIX #2: pagehide para iOS/Safari
+window.addEventListener('pagehide', function() {
+  try {
+    const payload = mkPayload();
+    localStorage.setItem(SKEY, JSON.stringify(payload));
+  } catch(err) {}
+});
+
 // ══════════════════════════════════════════════════════════════════════════════
 // SALVAR NO ARQUIVO — emite novo HTML com dados do localStorage embutidos
 // Mesma lógica do BLJ_PRD_POL_001_S5: captura outerHTML + inject restore script
 // ══════════════════════════════════════════════════════════════════════════════
-(function(){
-window.saveToFile = function(){
-  var btn = document.getElementById('save-file-btn');
-  var prevText    = btn ? btn.textContent.trim() : '';
-  var prevDisabled = btn ? btn.disabled : false;
 
-  // Resetar botão para estado neutro antes de capturar o outerHTML
-  if(btn){ btn.textContent = '💾 Salvar no Arquivo'; btn.disabled = false; }
+window.saveToFile = function() {
+  notify('✅ Dados salvos automaticamente no Gist. Use o botão ☁ para verificar a conexão.', 'ok');
+};
 
-  setTimeout(function(){
-    try{
-      // 1. Coletar TODOS os dados do localStorage com prefixo do sistema
-      var snap = {};
-      try{
-        for(var i = 0; i < localStorage.length; i++){
-          var k = localStorage.key(i);
-          // Capturar chave principal do painel + backup exportJSON
-          if(k && (k === 'natto-pa-s5' || k === 'natto-pa-local' || k.startsWith('natto-'))){
-            try{ snap[k] = JSON.parse(localStorage.getItem(k)); }
-            catch(e2){ snap[k] = localStorage.getItem(k); }
-          }
-        }
-      }catch(e3){}
 
-      // 2. Remover script de restauração anterior (se já foi salvo antes)
-      var old = document.getElementById('
 
-<div class="nt" style="background: var(--g1);">☁ Conectado! Carregando dados...</div></body></html>
+
+
+// ── Observação inline ─────────────────────────────────────────────────────────
+// ── CONFIGURAÇÃO DO GITHUB GIST ──────────────────────────────────────────────
+function showGistSetup(onSuccess, customTitle) {
+  var existing = document.getElementById('gist-setup-overlay');
+  if (existing) existing.remove();
+
+  var cfg      = getGistCfg() || {};
+  var isUpdate = !!cfg.token;
+  var title    = customTitle || (isUpdate ? '🔑 Renovar Token' : '☁ Configurar Acesso');
+
+  var overlay = document.createElement('div');
+  overlay.id        = 'gist-setup-overlay';
+  overlay.className = 'gist-overlay';
+  overlay.innerHTML =
+    '<div class="gist-modal">' +
+      '<h2>' + title + '</h2>' +
+      (isUpdate
+        ? '<div class="gist-tip">⚠ Seu token expirou ou foi revogado. Gere um <strong>novo token Classic</strong> com escopo <strong>gist</strong> e cole abaixo.<br><br>' +
+          'Acesse: <a href="https://github.com/settings/tokens/new" target="_blank"><strong>github.com/settings/tokens/new</strong></a><br>' +
+          '→ Selecione <strong>No expiration</strong><br>' +
+          '→ Marque apenas ✅ <strong>gist</strong><br>' +
+          '→ Clique <strong>Generate token</strong> e copie o <code>ghp_...</code></div>'
+        : '<div class="gist-steps">' +
+          '<strong>Primeiro acesso — configure seu token:</strong><br><br>' +
+          '1. Acesse <a href="https://github.com/settings/tokens/new" target="_blank"><strong>github.com/settings/tokens/new</strong></a><br>' +
+          '2. Note: <code>Natto PA</code> · Expiration: <strong>No expiration</strong><br>' +
+          '3. Marque apenas ✅ <strong>gist</strong><br>' +
+          '4. Clique <strong>Generate token</strong> e cole abaixo' +
+          '</div>') +
+      '<label>Seu Nome</label>' +
+      '<input id="cfg-user-name" type="text" placeholder="Ex: João Silva" autocomplete="name">' +
+      '<label>Token GitHub (<code>ghp_...</code>)</label>' +
+      '<input id="cfg-gist-token" type="password" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="font-family:monospace">' +
+      '<div class="gist-err" id="cfg-err"></div>' +
+      '<div class="gist-actions">' +
+        (isUpdate
+          ? '<button class="btn-cancel" onclick="document.getElementById(&quot;gist-setup-overlay&quot;).remove()">Fechar — usar cache</button>'
+          : '') +
+        '<button class="btn-connect" id="cfg-connect-btn" onclick="connectGist()">' +
+          (isUpdate ? '✅ Salvar Novo Token' : '✅ Conectar') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+  // Preencher nome salvo
+  var nameEl = document.getElementById('cfg-user-name');
+  if (nameEl) nameEl.value = localStorage.getItem('natto-pa-s5-user') || '';
+  var tokenEl = document.getElementById('cfg-gist-token');
+  if (tokenEl) tokenEl.focus();
+  window._gistOnSuccess = onSuccess || null;
+}
+
+
+async function connectGist() {
+  var tokenEl = document.getElementById('cfg-gist-token');
+  var nameEl  = document.getElementById('cfg-user-name');
+  var errEl   = document.getElementById('cfg-err');
+  var btn     = document.getElementById('cfg-connect-btn');
+
+  var token = tokenEl ? tokenEl.value.trim() : '';
+  var name  = nameEl  ? nameEl.value.trim()  : '';
+
+  errEl.style.display = 'none';
+  if (!token) {
+    errEl.textContent = '❌ Cole seu token GitHub (ghp_...) no campo acima.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+    errEl.textContent = '❌ Token inválido. Deve começar com ghp_ (token Classic).';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  btn.textContent = 'Verificando...';
+  btn.disabled = true;
+
+  try {
+    var res = await fetch('https://api.github.com/gists/' + GIST_ID, {
+      headers: { 'Authorization': 'token ' + token }
+    });
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('Token sem permissão. Gere um novo token com escopo ✅ gist em github.com/settings/tokens/new');
+    }
+    if (res.status === 404) {
+      throw new Error('Gist não encontrado. Contate o administrador do painel.');
+    }
+    if (!res.ok) throw new Error('Erro HTTP ' + res.status);
+
+    // Salvar apenas o token — ID já é fixo via GIST_ID
+    saveGistCfg(GIST_ID, token);
+
+    if (name) {
+      currentUser = name;
+      localStorage.setItem('natto-pa-s5-user', name);
+      var badge = document.getElementById('user-badge-txt');
+      if (badge) badge.textContent = name;
+    }
+
+    var ov = document.getElementById('gist-setup-overlay');
+    if (ov) ov.remove();
+    var rb = document.getElementById('recfg-btn');
+    if (rb) rb.style.display = 'none';
+    sessionStorage.removeItem('natto-token-modal-shown');
+    setSyncState('ok', '☁ Conectado!');
+    notify('✅ Conectado! Carregando dados atualizados...');
+
+    if (window._gistOnSuccess) {
+      window._gistOnSuccess();
+    } else {
+      var pendente = localStorage.getItem('natto-gist-pendente') === '1';
+      if (pendente) {
+        salvarDados(false).then(() => carregarDados());
+      } else {
+        carregarDados();
+      }
+    }
+  } catch(e) {
+    errEl.textContent = '❌ ' + e.message;
+    errEl.style.display = 'block';
+    btn.textContent = 'Tentar novamente';
+    btn.disabled = false;
+  }
+}
+
+
+// ── HISTÓRICO DE OBSERVAÇÕES ────────────────────────────────────────────────
+
+function obsHistHtml(p) {
+  const log = p.obsLog || [];
+  if (!log.length) return '<div style="font-size:11px;color:var(--g400);margin-bottom:.5rem;font-style:italic">Nenhuma observação ainda.</div>';
+  return '<div class="obs-hist">' + log.slice().reverse().map((ob, ri) => {
+    const i = log.length - 1 - ri; // real index for deletion
+    const d = new Date(ob.ts);
+    const ts = d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const txt = (ob.text||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<div class="obs-item">
+      <div class="obs-meta">
+        <span class="obs-author">👤 ${(ob.user||'—').replace(/</g,'&lt;')}</span>
+        <span class="obs-ts">${ts}</span>
+      </div>
+      <div class="obs-txt">${txt}</div>
+      <button class="obs-del" onclick="delObsItem('${p.id}',${i})" title="Remover esta observação">×</button>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function saveObsInline(pid) {
+  const p = plans.find(x => x.id === pid);
+  if (!p) return;
+  const ta = document.getElementById('obs-inline-' + pid);
+  if (!ta) return;
+  const val = ta.value.trim();
+  if (!val) { notify('Digite uma observação antes de adicionar.', 'warn'); return; }
+  if (!p.obsLog) p.obsLog = [];
+  // migrate legacy p.obs to obsLog if needed
+  if (p.obs && !p.obsLog.length) {
+    p.obsLog.push({ id: uid(), ts: new Date().toISOString(), user: 'Sistema', text: p.obs });
+    p.obs = '';
+  }
+  p.obsLog.push({ id: uid(), ts: new Date().toISOString(), user: getUser(), text: val });
+  ta.value = '';
+  auditLog('obs', p.title, 'Observação adicionada', val.length > 80 ? val.slice(0, 80) + '…' : val);
+  renderDetail();
+  notify('📝 Observação adicionada!');
+  saveImmediate('obs_added'); // FIX #2: salvar imediatamente
+}
+
+function delObsItem(pid, idx) {
+  const p = plans.find(x => x.id === pid);
+  if (!p || !p.obsLog) return;
+  if (!confirm('Remover esta observação?')) return;
+  const removed = p.obsLog.splice(idx, 1)[0];
+  auditLog('obs', p.title, 'Observação removida', (removed.text||'').slice(0, 80));
+  renderDetail();
+  notify('Observação removida');
+  saveImmediate('obs_removed'); // FIX #2: salvar imediatamente
+}
+
+</script>
+
+</body></html>
