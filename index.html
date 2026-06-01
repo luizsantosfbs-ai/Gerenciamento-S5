@@ -55,7 +55,7 @@
 </script>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Natto · Plano de Ação S5</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 :root{
   --g1:#007F38;--g2:#95C11F;--g1d:#005a28;--g1l:#e8f5ee;--g1m:#b8d9c5;
@@ -439,6 +439,7 @@ input[type=file]{display:none}
     </button>
 
     <button class="bimp bimp-full" id="save-file-btn" onclick="salvarDados(false)" title="Salvar todas as alterações no Gist agora" style="margin-bottom: 0.3rem; border-color: rgba(149, 193, 31, 0.35); font-weight: 700;">☁ Salvar na Nuvem</button>
+    <button class="sb-btn" onclick="carregarDados()" title="Buscar a versão mais recente salva por outros colaboradores" style="margin-bottom:.3rem;background:rgba(255,255,255,.07);font-size:10px;border-color:rgba(149,193,31,.25)">🔄 Atualizar do Gist</button>
     <input class="sx" placeholder="🔍 Buscar plano ou responsável..." id="sbox" oninput="renderSB()">
   </div>
   <div class="sb-sec">
@@ -898,6 +899,11 @@ const SKEY         = 'natto-pa-s5';
 const GIST_FILENAME = 'natto-pa-s5.json';
 const CFG_KEY      = 'natto-gist-cfg';
 const GIST_ID      = '819172f79e3cf13ee43ca95c145595e9'; // ID fixo — não é segredo
+// Repositório GitHub para armazenar anexos (arquivos grandes)
+const GH_OWNER     = 'luizantosfbs-ai';
+const GH_REPO      = 'Gerenciamento-S5';
+const GH_BRANCH    = 'main';
+const GH_ATTACH_PATH = 'anexos'; // pasta dentro do repositório
 
 function getGistCfg() {
   // Buscar token em todos os lugares onde foi salvo
@@ -989,7 +995,7 @@ async function salvarDados(silent = false) {
 
   setSyncState('saving', '☁ Salvando...');
   try {
-    const res = await fetch('https://api.github.com/gists/' + cfg.id, {
+    const res = await fetch('https://api.github.com/gists/' + cfg.id + '?t=' + Date.now(), {
       method: 'PATCH',
       headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(payload, null, 2) } } })
@@ -1637,17 +1643,47 @@ function updWhenReal(pid, idx, val) {
 function downloadEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
-  if (!ev || !ev.dataUrl) return notify('Arquivo não disponível para download', 'warn');
-  const a = document.createElement('a'); a.href=ev.dataUrl; a.download=ev.name; a.click();
+  if (!ev) return notify('Arquivo não encontrado', 'warn');
+  const target = ev.url || ev.dataUrl;
+  if (!target) return notify('Arquivo não disponível', 'warn');
+  window.open(target, '_blank');
 }
 function openEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
-  if (!ev || !ev.dataUrl) return notify('Arquivo não disponível', 'warn');
-  window.open(ev.dataUrl, '_blank');
+  if (!ev) return notify('Arquivo não encontrado', 'warn');
+  // Preferir URL do GitHub; fallback para dataUrl (evidências antigas)
+  const target = ev.url || ev.dataUrl;
+  if (!target) return notify('Arquivo não disponível — pode ter sido removido do GitHub', 'warn');
+  window.open(target, '_blank');
 }
-function remEv(pid, idx) {
+async function remEv(pid, idx) {
   const p = plans.find(x => x.id===pid);
+  if (!p) return;
+  const ev = p.evidences[idx];
+  // Tentar deletar o arquivo do GitHub também
+  if (ev && ev.path) {
+    const cfg = getGistCfg();
+    if (cfg) {
+      try {
+        const chk = await fetch(
+          'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/contents/' + ev.path,
+          { headers: { 'Authorization': 'token ' + cfg.token } }
+        );
+        if (chk.ok) {
+          const fData = await chk.json();
+          await fetch(
+            'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/contents/' + ev.path,
+            {
+              method: 'DELETE',
+              headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: 'Remover anexo: ' + ev.name, sha: fData.sha, branch: GH_BRANCH })
+            }
+          );
+        }
+      } catch(e) {}
+    }
+  }
   if (p) { p.evidences.splice(idx,1); renderDetail(); notify('Evidência removida'); scheduleAutoSave(); }
 }
 function trigUp(pid) {
@@ -1658,15 +1694,81 @@ function trigUp(pid) {
 function hDrop(e, pid) { e.preventDefault(); e.currentTarget.classList.remove('dg'); addFs(pid, [...e.dataTransfer.files]); }
 function addFs(pid, files) {
   const p = plans.find(x => x.id===pid); if (!p) return;
+  const cfg = getGistCfg();
+  if (!cfg) { notify('Configure o token GitHub antes de anexar arquivos.', 'warn'); return; }
+
+  notify('⏳ Enviando ' + files.length + ' arquivo(s) para o GitHub...', 'ok');
   let done = 0;
-  files.forEach(file => {
-    const reader = new FileReader();
-    reader.onload = e => {
-      p.evidences.push({name:file.name, size:fSz(file.size), dataUrl:e.target.result, type:file.type});
+
+  files.forEach(async file => {
+    try {
+      // 1. Ler o arquivo como base64
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload  = e => res(e.target.result.split(',')[1]); // só a parte base64
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+
+      // 2. Gerar nome único para evitar colisões
+      const ts   = Date.now();
+      const safe = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = GH_ATTACH_PATH + '/' + ts + '_' + safe;
+
+      // 3. Verificar se já existe (para obter SHA se precisar atualizar)
+      let sha = null;
+      try {
+        const chk = await fetch(
+          'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/contents/' + path,
+          { headers: { 'Authorization': 'token ' + cfg.token } }
+        );
+        if (chk.ok) { const j = await chk.json(); sha = j.sha; }
+      } catch(e) {}
+
+      // 4. Fazer upload do arquivo para o repositório
+      const body = { message: 'Anexo: ' + file.name, content: b64, branch: GH_BRANCH };
+      if (sha) body.sha = sha;
+
+      const upRes = await fetch(
+        'https://api.github.com/repos/' + GH_OWNER + '/' + GH_REPO + '/contents/' + path,
+        {
+          method: 'PUT',
+          headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        }
+      );
+
+      if (!upRes.ok) {
+        const err = await upRes.json();
+        throw new Error(err.message || 'HTTP ' + upRes.status);
+      }
+
+      const upData = await upRes.json();
+      const fileUrl = upData.content.download_url;
+
+      // 5. Salvar apenas a URL no plano (não o base64!)
+      p.evidences.push({
+        name:    file.name,
+        size:    fSz(file.size),
+        type:    file.type,
+        dataUrl: null,          // não salvar base64 no Gist
+        url:     fileUrl,       // URL pública do GitHub
+        path:    path           // caminho no repo para eventual exclusão
+      });
+
       done++;
-      if (done===files.length) { renderDetail(); notify(files.length+' evidência(s) anexada(s)'); scheduleAutoSave(); }
-    };
-    reader.readAsDataURL(file);
+      if (done === files.length) {
+        renderDetail();
+        notify('✅ ' + files.length + ' arquivo(s) enviado(s) com sucesso!');
+        scheduleAutoSave();
+      }
+    } catch(err) {
+      done++;
+      notify('❌ Erro ao enviar ' + file.name + ': ' + err.message, 'err');
+      if (done === files.length && p.evidences.length) {
+        renderDetail(); scheduleAutoSave();
+      }
+    }
   });
 }
 
@@ -2641,6 +2743,10 @@ function init() {
   updTopbar();
   carregarDados();
   if (!currentUser) setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 1200);
+  // Auto-refresh: recarregar do Gist a cada 60s para ver edições de outros colaboradores
+  setInterval(() => {
+    if (!_saving && document.visibilityState === 'visible') carregarDados();
+  }, 60000);
 }
 
 // ── Auto-refresh do report após importação ───────────────────────────────────
