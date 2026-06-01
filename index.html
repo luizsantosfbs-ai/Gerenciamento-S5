@@ -534,7 +534,7 @@ input[type=file]{display:none}
     <div class="tbt" id="ttl">#1 · Ausência das LPPs das embalagem secundárias</div>
     <div class="tbag" id="tbag" style="">Setor: Controle de Qualidade</div>
     <div class="sync-ind saving" id="sync-ind"><span class="sync-dot"></span><span id="sync-txt">☁ Conectando...</span></div>
-    <button id="recfg-btn" onclick="showGistSetup(null, '🔑 Atualizar Token GitHub')" title="Clique para atualizar o token ou reconfigurar a nuvem" style="display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#fff3cd;border:1.5px solid #f59e0b;color:#92400e;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">🔑 Atualizar Token</button>
+    <button id="recfg-btn" onclick="showGistSetup(function(){ salvarDados(false); }, '🔑 Atualizar Token — suas edições serão enviadas ao reconectar')" title="Token expirado — clique para renovar. Seus dados estão salvos localmente." style="display:none;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#fff3cd;border:1.5px solid #f59e0b;color:#92400e;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">🔑 Token expirado</button>
     <div class="user-badge" id="user-badge" onclick="promptUser()" title="Clique para alterar seu nome">👤 <span id="user-badge-txt">Luiz Santos</span></div>
   </div>
   <div class="ct" id="ct" style="">
@@ -881,7 +881,8 @@ function scheduleAutoSave() {
 async function salvarDados(silent = false) {
   if (_saving) return;
   _saving = true;
-  // Salvar sempre no localStorage primeiro (cache garantido)
+
+  // 1. Salvar SEMPRE no localStorage — nunca perde dado
   const payload = mkPayload();
   try { localStorage.setItem(SKEY, JSON.stringify(payload)); } catch(e) {}
 
@@ -900,18 +901,30 @@ async function salvarDados(silent = false) {
       headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(payload, null, 2) } } })
     });
-    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: res.status});
+    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: 401});
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
     setSyncState('ok', '☁ Salvo ' + ts);
+    // Marcar que o Gist está em dia
+    localStorage.setItem('natto-gist-pendente', '0');
     if (!silent) notify('☁ Dados salvos na nuvem!');
   } catch(e) {
-    if (e.code === 401 || e.code === 403) {
-      setSyncState('err', '🔑 Token inválido');
-      showGistSetup(null, '🔑 Token expirado — atualize para salvar na nuvem');
+    if (e.code === 401) {
+      // Token expirado — dados JÁ estão no localStorage, não há perda
+      setSyncState('err', '🔑 Token expirado');
+      localStorage.setItem('natto-gist-pendente', '1'); // marcar pendência
+      // Abrir modal apenas 1x por sessão para não irritar
+      if (!sessionStorage.getItem('natto-token-modal-shown')) {
+        sessionStorage.setItem('natto-token-modal-shown', '1');
+        setTimeout(() => showGistSetup(
+          // Ao reconectar com sucesso: re-enviar os dados pendentes automaticamente
+          () => { localStorage.removeItem('natto-token-modal-shown'); salvarDados(false); },
+          '🔑 Token expirado — renove para sincronizar na nuvem'
+        ), 400);
+      }
     } else {
       setSyncState('warn', '⚠ Sem conexão — salvo localmente');
-      if (!silent) notify('⚠ Sem rede — dados salvos só localmente', 'warn');
+      localStorage.setItem('natto-gist-pendente', '1');
     }
   } finally { _saving = false; }
 }
@@ -919,7 +932,7 @@ function cloudSave(silent = false) { return salvarDados(silent); }
 
 // ── CARREGAR do GitHub Gist ───────────────────────────────────────────────────
 async function carregarDados() {
-  // Carregar cache local imediatamente para não travar a tela
+  // 1. Carregar cache local imediatamente — tela nunca fica em branco
   try {
     const j = localStorage.getItem(SKEY);
     if (j) { const d = JSON.parse(j); restorePlans(d); }
@@ -937,23 +950,37 @@ async function carregarDados() {
     const res = await fetch('https://api.github.com/gists/' + cfg.id, {
       headers: { 'Authorization': 'token ' + cfg.token }
     });
-    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: res.status});
+    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: 401});
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const gist = await res.json();
     const file = gist.files[GIST_FILENAME];
-    if (file && file.content && file.content.trim() !== '{}' && file.content.trim() !== '') {
+
+    const pendente = localStorage.getItem('natto-gist-pendente') === '1';
+    if (pendente) {
+      // Havia dados pendentes locais — eles são mais recentes: re-enviar ao Gist
+      await salvarDados(true);
+      localStorage.setItem('natto-gist-pendente', '0');
+    } else if (file && file.content && file.content.trim() !== '{}') {
+      // Gist é mais recente — carregar
       const data = JSON.parse(file.content);
       try { localStorage.setItem(SKEY, JSON.stringify(data)); } catch(e) {}
       restorePlans(data);
     }
+
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
     setSyncState('ok', '☁ Sincronizado ' + ts);
   } catch(e) {
-    if (e.code === 401 || e.code === 403) {
-      setSyncState('err', '🔑 Token inválido');
-      setTimeout(() => showGistSetup(null, '🔑 Token expirado — atualize para continuar'), 600);
+    if (e.code === 401) {
+      setSyncState('err', '🔑 Token expirado');
+      if (!sessionStorage.getItem('natto-token-modal-shown')) {
+        sessionStorage.setItem('natto-token-modal-shown', '1');
+        setTimeout(() => showGistSetup(
+          () => { sessionStorage.removeItem('natto-token-modal-shown'); carregarDados(); },
+          '🔑 Token expirado — renove para sincronizar'
+        ), 600);
+      }
     } else {
-      setSyncState('warn', '⚠ Sem conexão — cache local');
+      setSyncState('warn', '⚠ Sem conexão — usando cache local');
     }
   }
 }
@@ -1144,7 +1171,9 @@ function setSyncState(state, txt) {
   const rb = document.getElementById('recfg-btn');
   if (el) el.className = 'sync-ind ' + state;
   if (t)  t.textContent = txt;
-  if (rb) rb.style.display = (state === 'err' || state === 'warn') ? 'flex' : 'none';
+  // Botão aparece em erro, aviso, ou quando há dados pendentes
+  const hasPending = localStorage.getItem('natto-gist-pendente') === '1';
+  if (rb) rb.style.display = (state === 'err' || state === 'warn' || hasPending) ? 'flex' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2538,7 +2567,7 @@ window.saveToFile = function(){
           if(k && (k === 'natto-pa-s5' || k === 'natto-pa-local' || k.startsWith('natto-'))){
             // Não embutir token/credenciais no arquivo — são por navegador
             var noEmbed=['natto-gist-cfg','natto-fb-cfg-dismissed'];
-            if(noEmbed.indexOf(k)>=0) return;
+            if(noEmbed.indexOf(k)>=0) continue;
             try{ snap[k] = JSON.parse(localStorage.getItem(k)); }
             catch(e2){ snap[k] = localStorage.getItem(k); }
           }
@@ -2720,12 +2749,23 @@ async function connectGist() {
     if (ov) ov.remove();
     var rb = document.getElementById('recfg-btn');
     if (rb) rb.style.display = 'none';
+    sessionStorage.removeItem('natto-token-modal-shown');
 
     setSyncState('ok', '☁ Conectado!');
-    notify('☁ Conectado com sucesso! Sincronizando...');
 
-    if (window._gistOnSuccess) window._gistOnSuccess();
-    else carregarDados();
+    if (window._gistOnSuccess) {
+      window._gistOnSuccess();
+    } else {
+      // Verificar se há dados pendentes para enviar antes de carregar do Gist
+      var pendente = localStorage.getItem('natto-gist-pendente') === '1';
+      if (pendente) {
+        notify('☁ Reconectado! Enviando suas edições pendentes...');
+        salvarDados(false).then(() => carregarDados());
+      } else {
+        notify('☁ Conectado! Sincronizando...');
+        carregarDados();
+      }
+    }
 
   } catch(e) {
     errEl.textContent = '❌ ' + e.message;
