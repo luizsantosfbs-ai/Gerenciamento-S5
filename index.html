@@ -955,13 +955,15 @@ let _attachments = {};  // { id: { name, type, size, data } }
 // Serializar estado para salvar
 function mkPayload() {
   return {
-    attachments: _attachments,   // base64 dos arquivos anexados
+    attachments: _attachments,   // base64 dos arquivos — indexados por attId
     plans: plans.map(p => ({
       ...p,
       evidences: (p.evidences || []).map(e => ({
         name:    e.name    || '',
         size:    e.size    || '',
         type:    e.type    || '',
+        attId:   e.attId   || '',   // referência ao attachment — ESSENCIAL
+        url:     e.url     || '',
         dataUrl: e.dataUrl || ''
       })),
       obsLog: p.obsLog || []
