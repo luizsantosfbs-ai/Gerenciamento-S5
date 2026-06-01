@@ -1069,16 +1069,36 @@ async function carregarDados() {
     const gist  = await res.json();
     const file  = gist.files[GIST_FILENAME];
 
-    if (file && file.content && file.content.trim().length > 2) {
-      const data = JSON.parse(file.content);
+    // Buscar conteúdo do arquivo principal (via raw_url se truncado)
+    let mainContent = file ? file.content : null;
+    if (file && (file.truncated || !mainContent || mainContent.trim().length < 3)) {
+      const raw = await fetch(file.raw_url, {
+        headers: { 'Authorization': 'token ' + cfg.token }
+      });
+      mainContent = await raw.text();
+    }
 
-      // Carregar attachments do arquivo separado no mesmo Gist
+    if (mainContent && mainContent.trim().length > 2) {
+      const data = JSON.parse(mainContent);
+
+      // Carregar attachments do arquivo separado
       const attachFile = gist.files[GIST_ATTACH_FILE];
-      if (attachFile && attachFile.content && attachFile.content.length > 2) {
-        try {
-          const ad = JSON.parse(attachFile.content);
-          if (ad && ad.attachments) _attachments = ad.attachments;
-        } catch(ae) {}
+      if (attachFile) {
+        let attachContent = attachFile.content;
+        if (attachFile.truncated || !attachContent || attachContent.length < 3) {
+          try {
+            const rawA = await fetch(attachFile.raw_url, {
+              headers: { 'Authorization': 'token ' + cfg.token }
+            });
+            attachContent = await rawA.text();
+          } catch(ae) {}
+        }
+        if (attachContent && attachContent.length > 2) {
+          try {
+            const ad = JSON.parse(attachContent);
+            if (ad && ad.attachments) _attachments = ad.attachments;
+          } catch(ae) {}
+        }
       }
       data.attachments = _attachments;
 
