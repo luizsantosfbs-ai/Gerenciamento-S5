@@ -890,32 +890,329 @@ FBJ.SID.LPP.005 - Lição Ponto a Ponto - Bandejas de Linguiça Petisco em Caixa
 // DADOS
 // ═══════════════════════════════════════════════════════════
 const GUT={};
-
 const RAW={};
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CONSTANTES GLOBAIS
+// ══════════════════════════════════════════════════════════════════════════════
+const SKEY             = 'natto-pa-s5';          // localStorage: só cfg leve
+const GIST_FILENAME    = 'natto-pa-s5.json';
+const GIST_ATTACH_FILE = 'natto-pa-s5-attachments.json';
+const CFG_KEY          = 'natto-gist-cfg';
+const GIST_ID          = '819172f79e3cf13ee43ca95c145595e9';
+const GH_OWNER         = 'luizsantosfbs-ai';
+const GH_REPO          = 'Gerenciamento-S5';
+const GH_BRANCH        = 'main';
+const GH_ATTACH_PATH   = 'anexos';
 
 // ══════════════════════════════════════════════════════════════════════════════
-// PERSISTÊNCIA — GitHub Gist (nuvem) + localStorage (cache local)
+// ██  CAMADA 1 — IndexedDB  (armazenamento principal, sobrevive a F5)
 // ══════════════════════════════════════════════════════════════════════════════
-const SKEY              = 'natto-pa-s5';
-const GIST_FILENAME      = 'natto-pa-s5.json';
-const GIST_ATTACH_FILE   = 'natto-pa-s5-attachments.json';
-const CFG_KEY      = 'natto-gist-cfg';
-const GIST_ID      = '819172f79e3cf13ee43ca95c145595e9'; // ID fixo — não é segredo
-// Repositório GitHub para armazenar anexos (arquivos grandes)
-const GH_OWNER     = 'luizsantosfbs-ai';
-const GH_REPO      = 'Gerenciamento-S5';
-const GH_BRANCH    = 'main';
-const GH_ATTACH_PATH = 'anexos'; // pasta dentro do repositório
+const IDB_NAME    = 'natto-pa-s5-db';
+const IDB_VERSION = 2;
+
+let _db = null;   // instância única — aberta uma vez na init
+
+function openDB() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      // plans: cada plano como um registro separado
+      if (!db.objectStoreNames.contains('plans')) {
+        db.createObjectStore('plans', { keyPath: 'id' });
+      }
+      // attachments: blobs binários indexados por attId
+      if (!db.objectStoreNames.contains('attachments')) {
+        db.createObjectStore('attachments', { keyPath: 'id' });
+      }
+      // audit: log de auditoria
+      if (!db.objectStoreNames.contains('audit')) {
+        db.createObjectStore('audit', { keyPath: 'id', autoIncrement: true });
+      }
+      // pendingSync: operações offline aguardando envio
+      if (!db.objectStoreNames.contains('pendingSync')) {
+        db.createObjectStore('pendingSync', { keyPath: 'id', autoIncrement: true });
+      }
+      // meta: versão, timestamps, estado global
+      if (!db.objectStoreNames.contains('meta')) {
+        db.createObjectStore('meta', { keyPath: 'key' });
+      }
+    };
+    req.onsuccess = e => { _db = e.target.result; resolve(_db); };
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// Helper: executar uma operação IDB de forma promise-ificada
+function idbOp(storeName, mode, fn) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const tx  = db.transaction(storeName, mode);
+    const st  = tx.objectStore(storeName);
+    const req = fn(st);
+    if (req && req.onsuccess !== undefined) {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror   = () => reject(req.error);
+    } else {
+      tx.oncomplete = () => resolve();
+      tx.onerror    = () => reject(tx.error);
+    }
+  }));
+}
+
+// ── Plans ─────────────────────────────────────────────────────────────────────
+async function idbSaveAllPlans(plansArr) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('plans', 'readwrite');
+    const st = tx.objectStore('plans');
+    // Limpar e reinserir (garante remoção de planos deletados)
+    st.clear();
+    plansArr.forEach(p => {
+      // Nunca persistir dataUrl inline no IDB — só referência attId
+      const safe = {
+        ...p,
+        evidences: (p.evidences || []).map(e => ({
+          name: e.name, size: e.size, type: e.type,
+          attId: e.attId || '', url: e.url || '', dataUrl: ''
+        }))
+      };
+      st.put(safe);
+    });
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbLoadAllPlans() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('plans', 'readonly');
+    const req = tx.objectStore('plans').getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ── Attachments ───────────────────────────────────────────────────────────────
+async function idbSaveAttachment(attId, record) {
+  // record = { id, name, type, size, blob?, dataUrl? }
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('attachments', 'readwrite');
+    tx.objectStore('attachments').put({ id: attId, ...record });
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbLoadAttachment(attId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('attachments', 'readonly');
+    const req = tx.objectStore('attachments').get(attId);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+async function idbDeleteAttachment(attId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('attachments', 'readwrite');
+    tx.objectStore('attachments').delete(attId);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbLoadAllAttachments() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('attachments', 'readonly');
+    const req = tx.objectStore('attachments').getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ── Audit ─────────────────────────────────────────────────────────────────────
+async function idbAppendAudit(entry) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('audit', 'readwrite');
+    tx.objectStore('audit').add(entry);
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbLoadAudit(limit = 500) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx      = db.transaction('audit', 'readonly');
+    const req     = tx.objectStore('audit').getAll();
+    req.onsuccess = () => {
+      const all = req.result || [];
+      resolve(all.slice(-limit)); // últimos N registros
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbClearAudit() {
+  return idbOp('audit', 'readwrite', st => { st.clear(); });
+}
+
+// ── PendingSync ───────────────────────────────────────────────────────────────
+async function idbAddPending(op) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('pendingSync', 'readwrite');
+    tx.objectStore('pendingSync').add({ ...op, queuedAt: new Date().toISOString() });
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbClearPending() {
+  return idbOp('pendingSync', 'readwrite', st => { st.clear(); });
+}
+
+async function idbLoadPending() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('pendingSync', 'readonly');
+    const req = tx.objectStore('pendingSync').getAll();
+    req.onsuccess = () => resolve(req.result || []);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ── Meta ─────────────────────────────────────────────────────────────────────
+async function idbSetMeta(key, value) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('meta', 'readwrite');
+    tx.objectStore('meta').put({ key, value, updatedAt: new Date().toISOString() });
+    tx.oncomplete = () => resolve();
+    tx.onerror    = () => reject(tx.error);
+  });
+}
+
+async function idbGetMeta(key) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction('meta', 'readonly');
+    const req = tx.objectStore('meta').get(key);
+    req.onsuccess = () => resolve(req.result ? req.result.value : null);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██  CAMADA 2 — Estado em memória (apenas referências, sem blobs)
+// ══════════════════════════════════════════════════════════════════════════════
+let _attachmentsLoaded = false;  // flag: attachments já carregados do IDB
+let _localVersion      = 0;      // versão local — incrementada a cada mudança
+let _hasPendingSave    = false;
+let _saving            = false;
+let _pendingSaveCount  = 0;
+let _lastSavedAt       = null;
+let _autoSaveTimer     = null;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██  CAMADA 3 — Persistência imediata no IDB (substitui localStorage)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Salvar todos os planos no IDB imediatamente (< 1ms overhead)
+async function persistPlans() {
+  _localVersion++;
+  try {
+    await idbSaveAllPlans(plans);
+    await idbSetMeta('version', _localVersion);
+    await idbSetMeta('updatedAt', new Date().toISOString());
+    await idbSetMeta('updatedBy', getUser());
+  } catch(e) {
+    console.error('[IDB] persistPlans error:', e);
+  }
+}
+
+// Salvar imediatamente no IDB + agendar sync com Gist
+function saveImmediate(reason) {
+  if (_autoSaveTimer) clearTimeout(_autoSaveTimer);
+  _pendingSaveCount++;
+  // Gravar no IDB de forma não-bloqueante
+  persistPlans().catch(console.error);
+  // Agendar envio para Gist (debounce 2s)
+  if (!_saving) {
+    _autoSaveTimer = setTimeout(() => salvarDados(true), 2000);
+  } else {
+    _hasPendingSave = true;
+  }
+  setSyncState('warn', `🔵 ${_pendingSaveCount} alteração(ões) pendente(s)`);
+}
+
+// Alias compatível com código existente
+function scheduleAutoSave() { saveImmediate('auto'); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██  CAMADA 4 — Carregamento inicial (IDB first, Gist depois)
+// ══════════════════════════════════════════════════════════════════════════════
+async function carregarLocal() {
+  // 1. Carregar planos do IDB
+  const idbPlans = await idbLoadAllPlans();
+
+  // 2. Carregar attachments do IDB e reconstituir em memória
+  if (!_attachmentsLoaded) {
+    const atts = await idbLoadAllAttachments();
+    atts.forEach(a => { _attachments[a.id] = a; });
+    _attachmentsLoaded = true;
+  }
+
+  // 3. Carregar auditoria do IDB
+  const idbAudit = await idbLoadAudit();
+  try {
+    localStorage.setItem(AUDIT_KEY, JSON.stringify(idbAudit));
+  } catch(e) {}
+
+  if (idbPlans && idbPlans.length) {
+    plans = idbPlans;
+    // Restaurar estado de interface
+    bRM(); renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
+    return true;
+  }
+
+  // Fallback: tentar localStorage legado (migração)
+  try {
+    const legacyRaw = localStorage.getItem(SKEY);
+    if (legacyRaw) {
+      const legacy = JSON.parse(legacyRaw);
+      if (legacy && legacy.plans && legacy.plans.length) {
+        plans = legacy.plans;
+        // Migrar para IDB imediatamente
+        await idbSaveAllPlans(plans);
+        console.log('[IDB] Migração do localStorage: ' + plans.length + ' planos');
+        bRM(); renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
+        return true;
+      }
+    }
+  } catch(e) {}
+
+  return false;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██  CAMADA 5 — Sincronização com GitHub Gist (nuvem)
+// ══════════════════════════════════════════════════════════════════════════════
 
 function getGistCfg() {
-  // Buscar token em todos os lugares onde foi salvo
   const sources = [
     () => localStorage.getItem(CFG_KEY),
     () => sessionStorage.getItem(CFG_KEY),
     () => sessionStorage.getItem(CFG_KEY + '-bkp'),
     () => {
-      // Ler do cookie
       const m = document.cookie.split(';').map(c => c.trim())
         .find(c => c.startsWith(CFG_KEY + '='));
       return m ? decodeURIComponent(m.split('=').slice(1).join('=')) : null;
@@ -928,7 +1225,6 @@ function getGistCfg() {
       if (!raw) continue;
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (parsed && parsed.token && parsed.token.length > 10) {
-        // Re-salvar em todos os lugares se encontrou em algum (auto-reparo)
         const val = JSON.stringify({ id: GIST_ID, token: parsed.token });
         try { localStorage.setItem(CFG_KEY, val); } catch(e) {}
         try { sessionStorage.setItem(CFG_KEY, val); } catch(e) {}
@@ -938,201 +1234,65 @@ function getGistCfg() {
   }
   return null;
 }
+
 function saveGistCfg(id, token) {
   const val = JSON.stringify({ id: GIST_ID, token });
-  // Salvar em 3 lugares para máxima resiliência
   try { localStorage.setItem(CFG_KEY, val); } catch(e) {}
   try { sessionStorage.setItem(CFG_KEY, val); } catch(e) {}
   try { sessionStorage.setItem(CFG_KEY + '-bkp', val); } catch(e) {}
-  // Cookie de sessão como último recurso (sem expiração = sessão do browser)
   try {
     document.cookie = CFG_KEY + '=' + encodeURIComponent(val) + '; path=/; SameSite=Strict';
   } catch(e) {}
 }
 function clearGistCfg() { localStorage.removeItem(CFG_KEY); }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// SISTEMA DE AUTOSAVE COM FILA — garante que nenhuma alteração é perdida
-// ══════════════════════════════════════════════════════════════════════════════
-let autoSaveTimer = null;
-let _saving = false;
-let _hasPendingSave = false;   // FIX #1: fila de salvamento
-let _pendingSaveCount = 0;     // contador de alterações pendentes
-let _lastSavedAt = null;       // timestamp do último salvamento
-let _attachments = {};         // { id: { name, type, size, data } }
-
-// FIX #9: Indicador de estado de sincronização melhorado
-function updateSyncBadge() {
-  const el = document.getElementById('sync-ind');
-  if (!el) return;
-  const pending = _pendingSaveCount;
-  const rb = document.getElementById('recfg-btn');
-  const hasPending = localStorage.getItem('natto-gist-pendente') === '1';
-  if (rb) rb.style.display = (hasPending) ? 'flex' : 'none';
-  // Exibir contagem pendente no indicador
-  const pendTxt = pending > 0 ? ` (${pending} pend.)` : '';
-  const t = document.getElementById('sync-txt');
-  if (t && el.classList.contains('ok') && _lastSavedAt) {
-    t.textContent = `☁ Salvo ${_lastSavedAt}${pendTxt}`;
-  }
-}
-
-// Serializar estado para salvar
-// mkPayload — usado para salvar no Gist (inclui audit)
-function mkPayload() {
-  // FIX #3: adicionar version, updatedAt, updatedBy para controle de conflitos
-  const prevPayload = (() => {
-    try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch(e) { return {}; }
-  })();
-  const newVersion = (prevPayload.version || 14) + 1;
-
+// Payload para Gist (sem binários — binários ficam no arquivo separado de attachments)
+async function mkGistPayload() {
+  const audit = await idbLoadAudit(500);
+  const ver   = (await idbGetMeta('version')) || _localVersion;
   return {
     plans: plans.map(p => ({
       ...p,
       evidences: (p.evidences || []).map(e => ({
-        name:    e.name    || '',
-        size:    e.size    || '',
-        type:    e.type    || '',
-        attId:   e.attId   || '',
-        url:     e.url     || '',
-        dataUrl: ''          // NUNCA salvar base64 no arquivo principal
+        name: e.name, size: e.size, type: e.type,
+        attId: e.attId || '', url: e.url || '', dataUrl: ''
       })),
       obsLog: p.obsLog || []
     })),
-    audit: loadAuditLog(),
-    savedAt: new Date().toISOString(),
-    version: newVersion,
+    audit,
+    savedAt:   new Date().toISOString(),
+    version:   ver,
     updatedAt: new Date().toISOString(),
     updatedBy: getUser()
   };
 }
 
-// mkLocalPayload — versão ENXUTA para localStorage (sem base64, sem audit inline)
-// Evita estourar a quota de ~5 MB do localStorage
-function mkLocalPayload() {
-  const prevPayload = (() => {
-    try { return JSON.parse(localStorage.getItem(SKEY) || '{}'); } catch(e) { return {}; }
-  })();
-  const newVersion = (prevPayload.version || 14) + 1;
-
-  return {
-    plans: plans.map(p => ({
-      ...p,
-      evidences: (p.evidences || []).map(e => ({
-        name:    e.name    || '',
-        size:    e.size    || '',
-        type:    e.type    || '',
-        attId:   e.attId   || '',
-        url:     '',
-        dataUrl: ''   // NUNCA base64 no localStorage
-      })),
-      obsLog: (p.obsLog || []).slice(-20) // máx 20 obs por plano no cache local
-    })),
-    // audit NÃO vai aqui — já está em AUDIT_KEY separado
-    savedAt: new Date().toISOString(),
-    version: newVersion,
-    updatedAt: new Date().toISOString(),
-    updatedBy: getUser()
-  };
-}
-
-// Salvar no localStorage de forma segura — sem estourar quota
-function saveLocalCache() {
-  try {
-    const payload = mkLocalPayload();
-    const json = JSON.stringify(payload);
-    localStorage.setItem(SKEY, json);
-    return true;
-  } catch(e) {
-    // Quota excedida — tentar salvar versão ainda mais enxuta (só IDs e status)
-    try {
-      const minimal = {
-        plans: plans.map(p => ({
-          id: p.id, title: p.title, status: p.status, gs: p.gs, gp: p.gp,
-          setor: p.setor, setoresAcoes: p.setoresAcoes, responsible: p.responsible,
-          deadline: p.deadline, processo: p.processo, empresa: p.empresa,
-          actions: p.actions.map(a => ({
-            what: a.what, who: a.who, setor: a.setor,
-            when: a.when, when_real: a.when_real, status: a.status
-          })),
-          evidences: (p.evidences || []).map(e => ({
-            name: e.name, size: e.size, type: e.type, attId: e.attId
-          })),
-          obsLog: []
-        })),
-        savedAt: new Date().toISOString(),
-        _minimal: true
-      };
-      localStorage.setItem(SKEY, JSON.stringify(minimal));
-      console.warn('[Natto] localStorage quota: salvo versão minimal');
-      return true;
-    } catch(e2) {
-      console.error('[Natto] localStorage completamente cheio:', e2);
-      return false;
+// Payload de attachments para Gist (base64 strings — arquivo separado)
+function mkAttachGistPayload() {
+  // Converter blobs de volta para base64 antes de enviar ao Gist
+  const out = {};
+  Object.keys(_attachments).forEach(id => {
+    const a = _attachments[id];
+    if (a && a.dataUrl) {
+      out[id] = { name: a.name, type: a.type, size: a.size, dataUrl: a.dataUrl };
     }
-  }
+  });
+  return { attachments: out };
 }
 
-function mkAttachPayload() {
-  // Payload separado só com os base64 — salvo em arquivo separado no Gist
-  return { attachments: _attachments };
-}
-
-// FIX #1: Auto-save com fila — nenhuma alteração é perdida
-function scheduleAutoSave() {
-  _pendingSaveCount++;
-  setSyncState('warn', `🔵 ${_pendingSaveCount} alteração(ões) pendente(s)`);
-
-  // Salvar enxuto no localStorage (sem base64, sem estourar quota)
-  saveLocalCache();
-  // FIX #5: também salvar no IndexedDB offline (versão enxuta)
-  saveToIndexedDB(mkLocalPayload());
-
-  if (_saving) {
-    _hasPendingSave = true;
-    return;
-  }
-  if (autoSaveTimer) clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(() => salvarDados(true), 2000);
-}
-
-// FIX #2: Salvamento imediato em eventos críticos
-function saveImmediate(reason) {
-  if (autoSaveTimer) clearTimeout(autoSaveTimer);
-  _pendingSaveCount++;
-  // Salvar enxuto no localStorage
-  saveLocalCache();
-  saveToIndexedDB(mkLocalPayload());
-  // Não chamar salvarDados se já está salvando
-  if (!_saving) {
-    salvarDados(true);
-  } else {
-    _hasPendingSave = true;
-  }
-}
-
-// ── SALVAR no GitHub Gist ─────────────────────────────────────────────────────
+// ── SALVAR no Gist ─────────────────────────────────────────────────────────
 async function salvarDados(silent = false) {
-  if (_saving) {
-    // FIX #1: marcar pendente em vez de descartar
-    _hasPendingSave = true;
-    return;
-  }
+  if (_saving) { _hasPendingSave = true; return; }
   _saving = true;
   _hasPendingSave = false;
 
-  // Salvar versão ENXUTA no localStorage (sem base64 — nunca estoura quota)
-  saveLocalCache();
-  saveToIndexedDB(mkLocalPayload());
-
-  // Construir payload COMPLETO apenas para o Gist
-  const payload = mkPayload();
+  // 1. Persistir localmente primeiro (IDB, nunca falha)
+  await persistPlans();
 
   const cfg = getGistCfg();
   if (!cfg) {
     setSyncState('warn', '⚙ Configure a nuvem');
     _saving = false;
-    // FIX #1: processar fila pendente mesmo sem nuvem
     if (_hasPendingSave) setTimeout(() => salvarDados(true), 1000);
     if (!silent) showGistSetup();
     return;
@@ -1140,8 +1300,7 @@ async function salvarDados(silent = false) {
 
   setSyncState('saving', '🟡 Salvando...');
   try {
-    // FIX #3: Carregar versão remota para detectar conflito
-    let remoteVersion = null;
+    // 2. Verificar conflito de versão remota
     try {
       const vCheck = await fetch('https://api.github.com/gists/' + GIST_ID, {
         headers: { 'Authorization': 'token ' + cfg.token }
@@ -1149,50 +1308,46 @@ async function salvarDados(silent = false) {
       if (vCheck.ok) {
         const vData = await vCheck.json();
         const mainF = vData.files[GIST_FILENAME];
-        if (mainF && mainF.content) {
-          const parsed = JSON.parse(mainF.content);
-          remoteVersion = parsed.version;
-          const remoteUpdatedBy = parsed.updatedBy;
-          // Detectar conflito: versão remota é maior E foi modificada por outro usuário
-          if (remoteVersion > payload.version &&
-              remoteUpdatedBy && remoteUpdatedBy !== getUser()) {
-            _saving = false;
-            const doOverwrite = confirm(
-              `⚠️ Conflito de edição detectado!\n\n` +
-              `Este registro foi alterado por "${remoteUpdatedBy}" enquanto você editava.\n\n` +
-              `Deseja sobrescrever com suas alterações?\n` +
-              `(Cancelar para recarregar a versão mais recente)`
-            );
-            if (!doOverwrite) {
-              await carregarDados();
-              return;
+        if (mainF) {
+          let txt = mainF.content || '';
+          if (mainF.truncated) { try { const r = await fetch(mainF.raw_url); txt = await r.text(); } catch(e) {} }
+          if (txt.length > 2) {
+            const remote = JSON.parse(txt);
+            const localVer  = (await idbGetMeta('version')) || _localVersion;
+            const remoteVer = remote.version || 0;
+            const remoteBy  = remote.updatedBy;
+            if (remoteVer > localVer && remoteBy && remoteBy !== getUser()) {
+              _saving = false;
+              const overwrite = confirm(
+                `⚠️ Conflito detectado!\n\n"${remoteBy}" editou enquanto você trabalhava.\n\nSobrescrever com suas alterações?`
+              );
+              if (!overwrite) { await carregarDados(); return; }
+              auditLog('conflict', '(sistema)', `Conflito resolvido — sobrescrito por ${getUser()}`, `versão remota: ${remoteVer}`);
             }
-            auditLog('conflict', '(sistema)', `Conflito resolvido — sobrescrito por ${getUser()}`, `versão remota: ${remoteVersion}`);
           }
         }
       }
-    } catch(ve) { /* ignora erro na verificação de versão */ }
+    } catch(ve) { /* ignora falha na verificação */ }
 
-    const mainJson   = JSON.stringify(payload);
-    const attachJson = JSON.stringify(mkAttachPayload());
+    // 3. Construir payloads e enviar
+    const mainPayload   = await mkGistPayload();
+    const attachPayload = mkAttachGistPayload();
 
     const res = await fetch('https://api.github.com/gists/' + GIST_ID, {
       method: 'PATCH',
       headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         files: {
-          [GIST_FILENAME]:    { content: mainJson },
-          [GIST_ATTACH_FILE]: { content: attachJson }
+          [GIST_FILENAME]:    { content: JSON.stringify(mainPayload) },
+          [GIST_ATTACH_FILE]: { content: JSON.stringify(attachPayload) }
         }
       })
     });
 
-    if (res.status === 401 || res.status === 403) {
-      throw Object.assign(new Error('Token inválido ou expirado'), {code: 401});
-    }
+    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token expirado'), {code: 401});
     if (!res.ok) {
       let msg = 'HTTP ' + res.status;
-      try { const j = await res.json(); msg += ': ' + (j.message||''); } catch(je) {}
+      try { const j = await res.json(); msg += ': ' + (j.message || ''); } catch(je) {}
       throw new Error(msg);
     }
 
@@ -1200,8 +1355,7 @@ async function salvarDados(silent = false) {
     _lastSavedAt = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
     setSyncState('ok', `🟢 Salvo ${_lastSavedAt}`);
     localStorage.removeItem('natto-gist-pendente');
-    // FIX #5: limpar fila offline após sucesso
-    clearPendingSync();
+    await idbClearPending();
     if (!silent) notify('☁ Salvo na nuvem!');
 
   } catch(e) {
@@ -1216,36 +1370,22 @@ async function salvarDados(silent = false) {
         );
       }
     } else {
-      setSyncState('warn', '⚠ Erro — dados salvos localmente');
-      notify('❌ Erro: ' + (e.message||String(e)), 'err');
+      setSyncState('warn', '⚠ Erro — dados salvos no IDB');
+      notify('❌ Erro: ' + (e.message || String(e)), 'err');
       localStorage.setItem('natto-gist-pendente', '1');
-      // FIX #5: armazenar na fila offline
-      addToPendingSync(payload);
+      // Enfileirar para retry offline
+      idbAddPending({ type: 'save', at: new Date().toISOString() }).catch(() => {});
       setTimeout(() => { if (!_saving) salvarDados(true); }, 15000);
     }
   } finally {
     _saving = false;
-    // FIX #1: processar próximo salvamento da fila
-    if (_hasPendingSave) {
-      _hasPendingSave = false;
-      setTimeout(() => salvarDados(true), 500);
-    }
+    if (_hasPendingSave) { _hasPendingSave = false; setTimeout(() => salvarDados(true), 500); }
   }
 }
 function cloudSave(silent = false) { return salvarDados(silent); }
 
-// ── CARREGAR do GitHub Gist ───────────────────────────────────────────────────
+// ── CARREGAR do Gist ─────────────────────────────────────────────────────────
 async function carregarDados() {
-  // Mostrar cache local imediatamente (tela não fica em branco)
-  try {
-    const j = localStorage.getItem(SKEY);
-    if (j) {
-      const cached = JSON.parse(j);
-      // Attachments NÃO ficam no localStorage — vêm apenas do Gist
-      restorePlans(cached);
-    }
-  } catch(e) {}
-
   const cfg = getGistCfg();
   if (!cfg) {
     setSyncState('warn', '⚙ Configure a nuvem');
@@ -1253,59 +1393,106 @@ async function carregarDados() {
     return;
   }
 
-  setSyncState('saving', '☁ Carregando...');
+  setSyncState('saving', '☁ Sincronizando...');
   try {
     const res = await fetch('https://api.github.com/gists/' + GIST_ID, {
       headers: { 'Authorization': 'token ' + cfg.token }
     });
-    if (res.status === 401 || res.status === 403) {
-      throw Object.assign(new Error('Token inválido'), {code: 401});
-    }
+    if (res.status === 401 || res.status === 403) throw Object.assign(new Error('Token inválido'), {code: 401});
     if (!res.ok) throw new Error('HTTP ' + res.status);
 
     const gist = await res.json();
 
-    // Ler arquivo principal (raw_url se truncado pelo Gist)
+    // Ler arquivo principal
     const mainFile = gist.files[GIST_FILENAME];
     if (!mainFile) throw new Error('Arquivo de dados não encontrado no Gist');
     let mainText = mainFile.content || '';
     if (mainFile.truncated || mainText.length < 3) {
-      // raw_url não aceita Authorization cross-origin — buscar sem header
       const r = await fetch(mainFile.raw_url);
       mainText = await r.text();
     }
-    const data = JSON.parse(mainText);
+    const remoteData = JSON.parse(mainText);
 
-    // Ler arquivo de attachments (raw_url se truncado)
-    const attachFile = gist.files[GIST_ATTACH_FILE];
-    if (attachFile) {
-      let attachText = attachFile.content || '';
-      if (attachFile.truncated || attachText.length < 3) {
-        try {
-          // raw_url não aceita Authorization cross-origin — buscar sem header
-          const r = await fetch(attachFile.raw_url);
-          attachText = await r.text();
-        } catch(ae) {}
+    // Verificar se remoto é mais recente que local
+    const localVer  = (await idbGetMeta('version')) || _localVersion;
+    const localUpd  = (await idbGetMeta('updatedAt')) || '2000-01-01';
+    const remoteVer = remoteData.version || 0;
+    const pendentes = await idbLoadPending();
+
+    if (pendentes.length > 0 && localVer >= remoteVer) {
+      // Há alterações locais não enviadas — não sobrescrever
+      setSyncState('warn', `🔵 ${pendentes.length} alteração(ões) pendente(s)`);
+      notify('⚠ Alterações locais pendentes — sincronizando...', 'warn');
+      await salvarDados(true);
+      return;
+    }
+
+    // Ler arquivo de attachments do Gist
+    const attFile = gist.files[GIST_ATTACH_FILE];
+    if (attFile) {
+      let attText = attFile.content || '';
+      if (attFile.truncated || attText.length < 3) {
+        try { const r = await fetch(attFile.raw_url); attText = await r.text(); } catch(ae) {}
       }
-      if (attachText.length > 2) {
+      if (attText.length > 2) {
         try {
-          const ad = JSON.parse(attachText);
-          if (ad && ad.attachments) _attachments = ad.attachments;
-        } catch(ae) {}
+          const attData = JSON.parse(attText);
+          if (attData && attData.attachments) {
+            // Salvar attachments no IDB (persistência real)
+            for (const [id, att] of Object.entries(attData.attachments)) {
+              if (att && att.dataUrl) {
+                _attachments[id] = { ...att, id };
+                await idbSaveAttachment(id, { ...att, id });
+              }
+            }
+          }
+        } catch(ae) { console.warn('[Gist] Erro ao ler attachments:', ae); }
       }
     }
 
-    data.attachments = _attachments; // manter em memória apenas
-    localStorage.removeItem('natto-gist-pendente');
-    restorePlans(data);
-    saveLocalCache(); // salvar versão ENXUTA (sem base64) no localStorage
+    // Restaurar planos do Gist no IDB
+    if (remoteData.plans && remoteData.plans.length) {
+      // Mesclar preservando evidências locais que o Gist pode não conhecer
+      const localPlansMap = {};
+      plans.forEach(p => { localPlansMap[p.id] = p; });
 
-    const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    setSyncState('ok', '☁ Sincronizado ' + ts);
+      plans = remoteData.plans.map(rp => {
+        const local = localPlansMap[rp.id];
+        return {
+          ...rp,
+          // Preservar obsLog local se for mais recente
+          obsLog: (local && (local.obsLog||[]).length > (rp.obsLog||[]).length)
+            ? local.obsLog : (rp.obsLog || []),
+          // Preservar evidências — referências por attId
+          evidences: (rp.evidences || []).map(e => ({
+            name: e.name, size: e.size, type: e.type,
+            attId: e.attId || '', url: e.url || '', dataUrl: ''
+          }))
+        };
+      });
+
+      await idbSaveAllPlans(plans);
+      await idbSetMeta('version', remoteVer);
+      await idbSetMeta('updatedAt', remoteData.updatedAt || new Date().toISOString());
+    }
+
+    // Restaurar auditoria do Gist no IDB
+    if (remoteData.audit && Array.isArray(remoteData.audit)) {
+      try { localStorage.setItem(AUDIT_KEY, JSON.stringify(remoteData.audit)); } catch(e) {}
+    }
+
+    localStorage.removeItem('natto-gist-pendente');
+    await idbClearPending();
+
+    bRM(); cur = null; filtSetor = ''; filtProc = ''; filt = 'all';
+    renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
+
+    _lastSavedAt = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    setSyncState('ok', `🟢 Sincronizado ${_lastSavedAt}`);
 
   } catch(e) {
     if (e.code === 401) {
-      setSyncState('err', '🔑 Token expirado');
+      setSyncState('err', '🔴 Token expirado');
       if (!sessionStorage.getItem('natto-token-modal-shown')) {
         sessionStorage.setItem('natto-token-modal-shown', '1');
         setTimeout(() => showGistSetup(
@@ -1314,63 +1501,39 @@ async function carregarDados() {
         ), 500);
       }
     } else {
-      setSyncState('warn', '⚠ Sem conexão — cache local');
-      notify('⚠ ' + (e.message||String(e)), 'warn');
+      setSyncState('warn', '⚠ Sem conexão — dados do IDB');
+      // Não notificar com erro — dados locais estão disponíveis
     }
   }
 }
 function cloudLoad() { return carregarDados(); }
 
-// ── RESTAURAR estado ──────────────────────────────────────────────────────────
+// ── RESTAURAR estado a partir de um objeto de dados ──────────────────────────
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
-  let _evidencesCleaned = false;
-  // Restaurar attachments
-  if (data.attachments && typeof data.attachments === 'object') {
-    _attachments = data.attachments;
-  }
   plans = data.plans;
-  // Migrar p.obs legado para obsLog
   plans.forEach(p => {
     if (!p.obsLog) p.obsLog = [];
     if (p.obs && !p.obsLog.length) {
       p.obsLog.push({ id: uid(), ts: new Date().toISOString(), user: 'Sistema', text: p.obs });
       p.obs = '';
     }
-    // Limpar evidências com URL corrompida (owner errado, undefined, etc)
     if (p.evidences) {
-      const before = p.evidences.length;
-      p.evidences = p.evidences.filter(e => {
-        if (!e.url && !e.dataUrl) return false; // sem fonte — remover
-        if (e.url) {
-          // Remover URLs que claramente não têm owner/repo corretos
-          // api.github.com/repos.arquivo = owner/repo virou parte do nome
-          // Remover qualquer URL apontando para API de repositório (não é acesso direto)
-          if (e.url.includes('api.github.com/repos') ||
-              e.url.includes('repos.') ||
-              e.url.includes('repos//')) {
-            return false; // URL de API de repositório — não funciona como download_url
-          }
-        }
-        return true;
-      });
-      if (p.evidences.length < before) _evidencesCleaned = true;
+      p.evidences = p.evidences.filter(e => e.name); // limpar entradas sem nome
     }
   });
-  // Restaurar audit log do Gist se presente
   if (data.audit && Array.isArray(data.audit)) {
     try { localStorage.setItem(AUDIT_KEY, JSON.stringify(data.audit)); } catch(e) {}
   }
   bRM(); cur = null; filtSetor = ''; filtProc = ''; filt = 'all';
   renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
-  const scr = document.getElementById('rpt-screen');
-  if (scr && scr.classList.contains('active')) setTimeout(renderReport, 100);
   return true;
 }
 
-// ── EXPORTAR JSON ─────────────────────────────────────────────────────────────
-function exportJSON() {
-  const blob = new Blob([JSON.stringify(mkPayload(), null, 2)], {type:'application/json'});
+// ── EXPORT/IMPORT JSON ────────────────────────────────────────────────────────
+async function exportJSON() {
+  const payload = await mkGistPayload();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(blob),
     download: 'natto-backup-' + new Date().toISOString().slice(0,10) + '.json'
@@ -1379,18 +1542,18 @@ function exportJSON() {
   notify('📥 Backup JSON exportado!');
 }
 
-// ── IMPORTAR JSON ─────────────────────────────────────────────────────────────
 function importJSON() { document.getElementById('json-fi').click(); }
 
 function handleJsonImport(file) {
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try {
       const data = JSON.parse(e.target.result);
       if (restorePlans(data)) {
+        await idbSaveAllPlans(plans);
         notify('✅ JSON importado — ' + plans.length + ' planos!');
-        scheduleAutoSave();
+        saveImmediate('json_import');
       } else { notify('❌ JSON inválido ou sem planos', 'err'); }
     } catch(ex) { notify('❌ Erro JSON: ' + ex.message, 'err'); }
   };
@@ -1400,82 +1563,8 @@ function handleJsonImport(file) {
 function openShare()  { document.getElementById('share-modal').style.display = 'flex'; }
 function closeShare() { document.getElementById('share-modal').style.display = 'none'; }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
-// FIX #5: RECUPERAÇÃO OFFLINE — IndexedDB + fila de sincronização
-// ══════════════════════════════════════════════════════════════════════════════
-const IDB_NAME = 'natto-pa-s5-idb';
-const IDB_STORE = 'snapshots';
-let _idb = null;
-
-function openIDB() {
-  return new Promise((resolve, reject) => {
-    if (_idb) return resolve(_idb);
-    const req = indexedDB.open(IDB_NAME, 1);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(IDB_STORE)) {
-        db.createObjectStore(IDB_STORE, { keyPath: 'id' });
-      }
-      if (!db.objectStoreNames.contains('pendingSync')) {
-        db.createObjectStore('pendingSync', { keyPath: 'id', autoIncrement: true });
-      }
-    };
-    req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-async function saveToIndexedDB(payload) {
-  try {
-    const db = await openIDB();
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put({ id: 'main', ...payload, idbSavedAt: new Date().toISOString() });
-  } catch(e) {}
-}
-
-async function loadFromIndexedDB() {
-  try {
-    const db = await openIDB();
-    return await new Promise((res, rej) => {
-      const tx = db.transaction(IDB_STORE, 'readonly');
-      const req = tx.objectStore(IDB_STORE).get('main');
-      req.onsuccess = () => res(req.result);
-      req.onerror = () => rej(req.error);
-    });
-  } catch(e) { return null; }
-}
-
-async function addToPendingSync(payload) {
-  try {
-    const db = await openIDB();
-    const tx = db.transaction('pendingSync', 'readwrite');
-    tx.objectStore('pendingSync').add({ payload, queuedAt: new Date().toISOString() });
-  } catch(e) {}
-}
-
-async function clearPendingSync() {
-  try {
-    const db = await openIDB();
-    const tx = db.transaction('pendingSync', 'readwrite');
-    tx.objectStore('pendingSync').clear();
-  } catch(e) {}
-}
-
-// FIX #5: Reconectar e sincronizar automaticamente
-window.addEventListener('online', () => {
-  setSyncState('saving', '🟡 Reconectando...');
-  notify('🌐 Conexão restaurada — sincronizando...');
-  setTimeout(() => salvarDados(false), 1000);
-});
-
-window.addEventListener('offline', () => {
-  setSyncState('warn', '⚠ Sem internet — salvando localmente');
-  notify('⚠ Sem conexão — dados salvos localmente', 'warn');
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// FIX #4: UPLOAD DE EVIDÊNCIAS — limite 10MB, compressão, barra de progresso
+// ██  CAMADA 6 — Upload de Evidências (IDB como armazenamento primário)
 // ══════════════════════════════════════════════════════════════════════════════
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -1490,9 +1579,7 @@ function compressImage(dataUrl, maxDim, quality) {
       }
       const c = document.createElement('canvas');
       c.width = w; c.height = h;
-      const ctx = c.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      // Tentar WebP primeiro, fallback para JPEG
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
       try {
         const webp = c.toDataURL('image/webp', quality);
         if (webp && webp !== 'data:,') return resolve(webp);
@@ -1505,24 +1592,188 @@ function compressImage(dataUrl, maxDim, quality) {
 }
 
 function showUploadProgress(pid, fileName, pct, done) {
-  const p = plans.find(x => x.id === pid);
-  const card = document.querySelector(`[onclick="trigUp('${pid}')"]`)?.closest('.card');
+  const ez = document.querySelector(`[onclick="trigUp('${pid}')"]`);
+  const card = ez ? ez.closest('.card') : null;
   let bar = document.getElementById('upload-prog-' + pid);
   if (!bar && card) {
     bar = document.createElement('div');
     bar.id = 'upload-prog-' + pid;
     bar.style.cssText = 'margin:.4rem 0;padding:.4rem .6rem;background:var(--g1l);border:1px solid var(--g1m);border-radius:5px;font-size:10.5px;color:var(--g1d)';
-    card.querySelector('.ez').before(bar);
+    if (ez) ez.before(bar); else card.appendChild(bar);
   }
   if (bar) {
     if (done) { bar.remove(); return; }
     bar.innerHTML = `<div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>📤 ${fileName}</span><span>${pct}%</span></div>
-      <div style="height:4px;background:var(--g1l);border-radius:3px;overflow:hidden">
-        <div style="height:100%;background:var(--g1);border-radius:3px;width:${pct}%;transition:width .2s"></div>
-      </div>`;
+      <div style="height:4px;background:var(--g1m);border-radius:3px;overflow:hidden">
+        <div style="height:100%;background:var(--g1);border-radius:3px;width:${pct}%;transition:width .2s"></div></div>`;
   }
 }
 
+// _attachments em memória: { attId: { id, name, type, size, dataUrl } }
+let _attachments = {};
+
+function addFs(pid, files) {
+  const p = plans.find(x => x.id === pid); if (!p) return;
+
+  // Validar tamanho
+  const oversized = files.filter(f => f.size > MAX_FILE_SIZE);
+  if (oversized.length) {
+    notify(`❌ ${oversized.length} arquivo(s) excedem 10 MB: ${oversized.map(f => f.name).join(', ')}`, 'err');
+    files = files.filter(f => f.size <= MAX_FILE_SIZE);
+    if (!files.length) return;
+  }
+
+  notify('⏳ Processando ' + files.length + ' arquivo(s)...', 'ok');
+  let done = 0;
+
+  files.forEach(file => {
+    const isImage = file.type.startsWith('image/');
+    const reader = new FileReader();
+
+    reader.onprogress = ev => {
+      if (ev.lengthComputable)
+        showUploadProgress(pid, file.name, Math.round((ev.loaded / ev.total) * 75), false);
+    };
+
+    reader.onload = async ev => {
+      try {
+        let dataUrl = ev.target.result;
+        showUploadProgress(pid, file.name, 80, false);
+
+        // Comprimir imagens
+        if (isImage) {
+          try { dataUrl = await compressImage(dataUrl, 1920, 0.82); } catch(ce) {}
+        }
+        showUploadProgress(pid, file.name, 92, false);
+
+        const attId = uid();
+        const estSize = Math.round(dataUrl.length * 0.75);
+        const attRecord = {
+          id: attId, name: file.name,
+          type: isImage ? (dataUrl.startsWith('data:image/webp') ? 'image/webp' : file.type) : file.type,
+          size: fSz(estSize), dataUrl
+        };
+
+        // Salvar no IDB imediatamente (sobrevive a F5)
+        await idbSaveAttachment(attId, attRecord);
+        // Manter em memória para acesso rápido
+        _attachments[attId] = attRecord;
+
+        p.evidences.push({
+          name: file.name, size: fSz(estSize),
+          type: file.type, attId, url: null, dataUrl: null
+        });
+
+        showUploadProgress(pid, file.name, 100, true);
+        done++;
+        if (done === files.length) {
+          renderDetail();
+          notify(`✅ ${files.length} arquivo(s) anexado(s)!`);
+          saveImmediate('upload');
+        }
+      } catch(err) {
+        notify('❌ Erro ao processar ' + file.name + ': ' + err.message, 'err');
+        showUploadProgress(pid, file.name, 0, true);
+        done++;
+      }
+    };
+    reader.onerror = () => {
+      notify('❌ Erro ao ler ' + file.name, 'err');
+      showUploadProgress(pid, file.name, 0, true);
+      done++;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function trigUp(pid) {
+  const fi = document.getElementById('ev-fi');
+  fi.onchange = () => { addFs(pid, [...fi.files]); fi.value = ''; };
+  fi.click();
+}
+function hDrop(e, pid) {
+  e.preventDefault(); e.currentTarget.classList.remove('dg');
+  addFs(pid, [...e.dataTransfer.files]);
+}
+
+// Buscar dados do attachment (IDB → memória → nulo)
+async function getAttData(ev) {
+  if (!ev || !ev.attId) return null;
+  // 1. Memória
+  if (_attachments[ev.attId] && _attachments[ev.attId].dataUrl) return _attachments[ev.attId];
+  // 2. IDB
+  try {
+    const rec = await idbLoadAttachment(ev.attId);
+    if (rec && rec.dataUrl) {
+      _attachments[ev.attId] = rec; // colocar em memória
+      return rec;
+    }
+  } catch(e) {}
+  return null;
+}
+
+function downloadEv(pid, idx) {
+  const p = plans.find(x => x.id === pid); if (!p) return;
+  const ev = p.evidences[idx]; if (!ev) return notify('Arquivo não encontrado', 'warn');
+  getAttData(ev).then(att => {
+    const target = (att && att.dataUrl) ? att.dataUrl : (ev.url || null);
+    if (!target) return notify('Arquivo não disponível — pode não ter sido sincronizado', 'warn');
+    const a = Object.assign(document.createElement('a'), { href: target, download: ev.name });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  });
+}
+
+function openEv(pid, idx) {
+  const p = plans.find(x => x.id === pid); if (!p) return;
+  const ev = p.evidences[idx]; if (!ev) return notify('Arquivo não encontrado', 'warn');
+  getAttData(ev).then(att => {
+    const target = (att && att.dataUrl) ? att.dataUrl : (ev.url || null);
+    if (!target) return notify('Arquivo não disponível', 'warn');
+    const w = window.open('', '_blank');
+    if (w) {
+      if (target.startsWith('data:')) {
+        w.document.write('<html><body style="margin:0"><iframe src="' + target + '" style="width:100%;height:100vh;border:none"></iframe></body></html>');
+      } else { w.location.href = target; }
+    }
+  });
+}
+
+async function remEv(pid, idx) {
+  const p = plans.find(x => x.id === pid); if (!p) return;
+  const ev = p.evidences[idx]; if (!ev) return;
+  const confirmed = confirm(`⚠️ Excluir evidência?\n\n"${ev.name}"\n\nEsta ação não poderá ser desfeita.`);
+  if (!confirmed) return;
+  // Remover do IDB
+  if (ev.attId) {
+    await idbDeleteAttachment(ev.attId);
+    delete _attachments[ev.attId];
+  }
+  p.evidences.splice(idx, 1);
+  auditLog('delete', p.title, `Evidência excluída: ${ev.name}`, `Tamanho: ${ev.size}`);
+  renderDetail();
+  notify('Evidência removida');
+  saveImmediate('ev_removed');
+}
+
+function evHtml(p) {
+  return (p.evidences || []).map((e, i) => {
+    const hasMem = e.attId && _attachments[e.attId];
+    const szTxt  = hasMem ? (_attachments[e.attId].size || e.size) : e.size;
+    return `<div class="ei">
+      <span class="ei-icon" onclick="openEv('${p.id}',${i})">${fIcon(e.name)}</span>
+      <span class="en" onclick="openEv('${p.id}',${i})" title="Clique para abrir">${e.name}</span>
+      <span class="ei-sz">${szTxt}</span>
+      <div class="ei-btns">
+        <button class="ei-btn ei-dl" onclick="downloadEv('${p.id}',${i})">⬇ Baixar</button>
+        <button class="ei-btn ei-rm" onclick="remEv('${p.id}',${i})">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ██  UTILITÁRIOS
+// ══════════════════════════════════════════════════════════════════════════════
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
 
 function fmt(d) {
@@ -1534,41 +1785,26 @@ function fmt(d) {
   return s;
 }
 
-/**
- * xlDate — conversor robusto de datas para ISO YYYY-MM-DD
- * Suporta: número serial Excel, DD/MM/YYYY, YYYY-MM-DD, ISO 8601, DD-MM-YYYY
- */
 function xlDate(v) {
   if (v === null || v === undefined) return '';
   const s = String(v).trim();
   if (!s || s === 'null' || s === 'undefined' || s === 'Invalid Date') return '';
-
-  // ISO 8601: 2026-05-15T00:00:00Z ou 2026-05-15
   const mISO = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (mISO) return `${mISO[1]}-${mISO[2]}-${mISO[3]}`;
-
-  // DD/MM/YYYY ou D/M/YYYY
   const mBR = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mBR) return `${mBR[3]}-${mBR[2].padStart(2,'0')}-${mBR[1].padStart(2,'0')}`;
-
-  // DD-MM-YYYY
   const mDash = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
   if (mDash) return `${mDash[3]}-${mDash[2].padStart(2,'0')}-${mDash[1].padStart(2,'0')}`;
-
-  // Número serial Excel (ex: 46190 = 2026-05-15)
   if (/^\d+(\.\d+)?$/.test(s)) {
     const n = parseFloat(s);
     if (n > 1000 && n < 100000) {
       try {
-        // Ajuste: Excel usa base 1900-01-01 com bug do ano bissexto (+2 dias off)
         const d = new Date(Date.UTC(1900, 0, 1) + (n - 2) * 86400000);
         const iso = d.toISOString().slice(0, 10);
         if (iso >= '2000-01-01' && iso <= '2099-12-31') return iso;
       } catch(e) { return ''; }
     }
   }
-
-  // Fallback: Date.parse
   try {
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
@@ -1581,14 +1817,13 @@ function xlDate(v) {
 
 function toAS(s) {
   if (!s) return 'aberto';
-  const n = s.trim().toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, ''); // remover acentos
-  if (n === 'concluida' || n === 'concluido' || n.startsWith('conclu')) return 'concluido';
-  if (n === 'atrasado'  || n === 'atrasada'  || n.startsWith('atras'))  return 'atrasado';
-  if (n === 'falta prazo' || n === 'falta_prazo' || n === 'sem prazo')   return 'falta_prazo';
-  if (n === 'em andamento' || n === 'em_andamento' || n.startsWith('em and')) return 'em_andamento';
+  const n = s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (n.startsWith('conclu')) return 'concluido';
+  if (n.startsWith('atras'))  return 'atrasado';
+  if (n === 'falta prazo' || n === 'falta_prazo' || n === 'sem prazo') return 'falta_prazo';
+  if (n.startsWith('em and')) return 'em_andamento';
   if (n === 'aberto' || n === 'open') return 'aberto';
-  if (n === 'suspenso' || n === 'suspended' || n.startsWith('suspen')) return 'suspenso';
+  if (n.startsWith('suspen')) return 'suspenso';
   return 'aberto';
 }
 
@@ -1598,7 +1833,6 @@ function lDL(rows) {
 }
 
 function pSt(rows) {
-  // Normalizar usando toAS para garantir consistência com a planilha
   const s = rows.map(r => toAS(r.status));
   const active = s.filter(x => x !== 'suspenso');
   if (!active.length) return 'suspenso';
@@ -1643,7 +1877,7 @@ function notify(m, type='ok') {
   n.style.background = type==='err'?'var(--red)':type==='warn'?'var(--amb)':'var(--g1)';
   n.textContent = m;
   document.body.appendChild(n);
-  setTimeout(() => n.remove(), 3000);
+  setTimeout(() => n.remove(), 3500);
 }
 
 function setSyncState(state, txt) {
@@ -1651,33 +1885,27 @@ function setSyncState(state, txt) {
   const t  = document.getElementById('sync-txt');
   const rb = document.getElementById('recfg-btn');
   if (el) el.className = 'sync-ind ' + state;
-  if (t)  t.textContent = txt;
+  if (t)  t.textContent = (state === 'ok' && _lastSavedAt) ? `🟢 Salvo ${_lastSavedAt}` : txt;
   const hasPending = localStorage.getItem('natto-gist-pendente') === '1';
   if (rb) rb.style.display = (state === 'err' || hasPending) ? 'flex' : 'none';
-  // FIX #9: mostrar data/hora da última sincronização
-  if (state === 'ok' && _lastSavedAt) {
-    if (t) t.textContent = `🟢 Salvo ${_lastSavedAt}`;
-  }
 }
 
-// ── Diagnóstico: expor estado do localStorage no console e na tela ───────────
-function diagToken() {
-  const raw    = localStorage.getItem('natto-gist-cfg');
-  const dados  = localStorage.getItem('natto-pa-s5');
-  const parsed = raw ? JSON.parse(raw) : null;
-  const token  = parsed && parsed.token ? parsed.token : '';
-  const msg = [
-    'natto-gist-cfg: ' + (raw ? 'PRESENTE' : 'AUSENTE'),
-    'token: '         + (token ? token.slice(0,10)+'...' : 'VAZIO'),
-    'natto-pa-s5: '   + (dados ? 'PRESENTE' : 'AUSENTE'),
-    'backup: '        + (window.__natto_token_backup__ ? 'SIM' : 'NÃO'),
-  ].join(' | ');
-  return msg;
+// ── Monitoramento de armazenamento (Item 10) ─────────────────────────────────
+async function checkStorageQuota() {
+  if (!navigator.storage || !navigator.storage.estimate) return;
+  try {
+    const { usage, quota } = await navigator.storage.estimate();
+    const usedMB  = (usage  / 1048576).toFixed(1);
+    const totalMB = (quota  / 1048576).toFixed(0);
+    const pct     = Math.round((usage / quota) * 100);
+    if (pct > 80) {
+      notify(`⚠️ Armazenamento: ${usedMB}MB de ${totalMB}MB usados (${pct}%)`, 'warn');
+    }
+    console.log(`[Storage] ${usedMB}MB / ${totalMB}MB (${pct}%)`);
+  } catch(e) {}
 }
 
-// ═══════════════════════════════════════════════════════════
-// CONSTRUIR PLANOS
-// ═══════════════════════════════════════════════════════════
+
 function buildPlansFromRaw(raw) {
   return Object.entries(raw).map(([dir, rows]) => {
     const g = gG(dir);
@@ -2003,7 +2231,7 @@ function updAS(pid, idx, val) {
       'Status da ação alterado: ' + sL(oldStatus) + ' → ' + sL(val),
       (p.actions[idx].what||'').slice(0,80));
     renderDetail(); renderSB(); notify('Status atualizado');
-    saveImmediate('status_change'); // FIX #2: salvar imediatamente ao mudar status
+    saveImmediate('status'); // _saveImmediate('status_change'); // FIX #2: salvar imediatamente ao mudar status
   }
 }
 function updWhenPrev(pid, idx, val) {
@@ -2030,158 +2258,6 @@ function updWhenReal(pid, idx, val) {
     notify('Prazo realizado atualizado');
   }
 }
-function downloadEv(pid, idx) {
-  const p = plans.find(x => x.id===pid); if (!p) return;
-  const ev = p.evidences[idx];
-  if (!ev) return notify('Arquivo não encontrado', 'warn');
-  const att = ev.attId ? _attachments[ev.attId] : null;
-  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
-  if (!target) return notify('Arquivo não disponível', 'warn');
-  const a = Object.assign(document.createElement('a'), {href: target, download: ev.name});
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-}
-function openEv(pid, idx) {
-  const p = plans.find(x => x.id===pid); if (!p) return;
-  const ev = p.evidences[idx];
-  if (!ev) return notify('Arquivo não encontrado', 'warn');
-  // Buscar pelo attId no dicionário de attachments
-  const att = ev.attId ? _attachments[ev.attId] : null;
-  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
-  if (!target) return notify('Arquivo não disponível', 'warn');
-  // Abrir em nova aba
-  const w = window.open('', '_blank');
-  if (w) {
-    if (target.startsWith('data:')) {
-      w.document.write('<html><body style="margin:0"><iframe src="' + target + '" style="width:100%;height:100vh;border:none"></iframe></body></html>');
-    } else {
-      w.location.href = target;
-    }
-  }
-}
-async function remEv(pid, idx) {
-  const p = plans.find(x => x.id===pid);
-  if (!p) return;
-  const ev = p.evidences[idx];
-  if (!ev) return;
-
-  // FIX #7: Confirmação obrigatória antes de excluir
-  const confirmed = confirm(
-    `⚠️ Excluir evidência?\n\n"${ev.name}"\n\nEsta ação não poderá ser desfeita.`
-  );
-  if (!confirmed) return;
-
-  // Remover do dicionário de attachments
-  if (ev.attId && _attachments[ev.attId]) {
-    delete _attachments[ev.attId];
-  }
-  p.evidences.splice(idx, 1);
-  auditLog('delete', p.title, `Evidência excluída: ${ev.name}`, `Tamanho: ${ev.size}`);
-  renderDetail();
-  notify('Evidência removida');
-  scheduleAutoSave();
-}
-function trigUp(pid) {
-  const fi = document.getElementById('ev-fi');
-  fi.onchange = () => { addFs(pid, [...fi.files]); fi.value=''; };
-  fi.click();
-}
-function hDrop(e, pid) { e.preventDefault(); e.currentTarget.classList.remove('dg'); addFs(pid, [...e.dataTransfer.files]); }
-function addFs(pid, files) {
-  const p = plans.find(x => x.id===pid); if (!p) return;
-
-  // FIX #4: Validar tamanho máximo (10 MB)
-  const oversized = files.filter(f => f.size > MAX_FILE_SIZE);
-  if (oversized.length) {
-    notify(`❌ ${oversized.length} arquivo(s) excedem 10 MB: ${oversized.map(f=>f.name).join(', ')}`, 'err');
-    files = files.filter(f => f.size <= MAX_FILE_SIZE);
-    if (!files.length) return;
-  }
-
-  notify('⏳ Processando ' + files.length + ' arquivo(s)...', 'ok');
-  let done = 0;
-
-  files.forEach(file => {
-    const isImage = file.type.startsWith('image/');
-    const reader = new FileReader();
-
-    reader.onprogress = e => {
-      if (e.lengthComputable) {
-        const pct = Math.round((e.loaded / e.total) * 80);
-        showUploadProgress(pid, file.name, pct, false);
-      }
-    };
-
-    reader.onload = async e => {
-      try {
-        let dataUrl = e.target.result;
-        showUploadProgress(pid, file.name, 85, false);
-
-        // FIX #4: Comprimir imagens automaticamente
-        if (isImage) {
-          try {
-            dataUrl = await compressImage(dataUrl, 1920, 0.82);
-          } catch(ce) { /* manter original */ }
-        }
-        showUploadProgress(pid, file.name, 95, false);
-
-        const attId = uid();
-        const compressedSize = Math.round(dataUrl.length * 0.75);
-
-        _attachments[attId] = {
-          name: file.name,
-          type: isImage ? (dataUrl.startsWith('data:image/webp') ? 'image/webp' : file.type) : file.type,
-          size: fSz(compressedSize),
-          data: dataUrl
-        };
-
-        p.evidences.push({
-          name:  file.name,
-          size:  fSz(compressedSize),
-          type:  file.type,
-          attId: attId,
-          url:   null,
-          dataUrl: null
-        });
-
-        done++;
-        showUploadProgress(pid, file.name, 100, true);
-        if (done === files.length) {
-          renderDetail();
-          notify(`✅ ${files.length} arquivo(s) anexado(s)!`);
-          scheduleAutoSave();
-        }
-      } catch(err) {
-        notify('❌ Erro ao processar ' + file.name + ': ' + err.message, 'err');
-        showUploadProgress(pid, file.name, 0, true);
-        done++;
-      }
-    };
-    reader.onerror = () => {
-      notify('❌ Erro ao ler ' + file.name, 'err');
-      showUploadProgress(pid, file.name, 0, true);
-      done++;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function evHtml(p) {
-  return p.evidences.map((e,i) => `
-    <div class="ei">
-      <span class="ei-icon" onclick="openEv('${p.id}',${i})">${fIcon(e.name)}</span>
-      <span class="en" onclick="openEv('${p.id}',${i})" title="Clique para abrir">${e.name}</span>
-      <span class="ei-sz">${(_attachments[e.attId]||{}).size||e.size}</span>
-      <div class="ei-btns">
-        <button class="ei-btn ei-dl" onclick="downloadEv('${p.id}',${i})">⬇ Baixar</button>
-        <button class="ei-btn ei-rm" onclick="remEv('${p.id}',${i})">×</button>
-      </div>
-    </div>`).join('');
-}
-
-// ═══════════════════════════════════════════════════════════
-// FORMULÁRIO
-// ═══════════════════════════════════════════════════════════
-
 function showForm(ed=false) {
   const p = ed&&cur ? cur : {id:uid(),title:'',empresa:'',processo:'S5',setor:'',responsible:'',deadline:'',status:'aberto',gs:0,gp:'none',gc:'—',setoresAcoes:[],actions:[],evidences:[]};
   fActs = p.actions.map(a => ({...a})); fEvs = [...p.evidences];
@@ -2995,26 +3071,28 @@ function loadAuditLog() {
 }
 
 function saveAuditLog(log) {
-  // Dispara sync para o Gist incluir o audit atualizado
-  scheduleAutoSave();
-  try {
-    // Manter apenas os AUDIT_MAX mais recentes
-    const trimmed = log.slice(-AUDIT_MAX);
-    localStorage.setItem(AUDIT_KEY, JSON.stringify(trimmed));
-  } catch(e) {}
+  // Persistir auditoria no IDB (não no localStorage — evita quota)
+  const trimmed = log.slice(-AUDIT_MAX);
+  try { localStorage.setItem(AUDIT_KEY, JSON.stringify(trimmed)); } catch(e) {}
+  // Append ao IDB (silencioso)
+  // (idbAppendAudit é chamado por auditLog diretamente)
 }
 
 function auditLog(type, planTitle, description, extra) {
-  const log = loadAuditLog();
-  log.push({
+  const entry = {
     id:    Date.now().toString(36) + Math.random().toString(36).slice(2,5),
     ts:    new Date().toISOString(),
     user:  getUser(),
-    type,          // 'status' | 'prazo' | 'plan' | 'import' | 'delete'
+    type,
     plan:  planTitle || '',
     desc:  description || '',
     extra: extra || ''
-  });
+  };
+  // Persistir no IDB (sobrevive a F5)
+  idbAppendAudit(entry).catch(() => {});
+  // Também manter no localStorage para compatibilidade
+  const log = loadAuditLog();
+  log.push(entry);
   saveAuditLog(log);
 }
 
@@ -3119,8 +3197,8 @@ function renderAudit() {
     '</tbody></table></div>';
 }
 
-function init() {
-  // Restaurar token se um restore script antigo o apagou
+async function init() {
+  // Restaurar token se apagado por script legado
   try {
     if (window.__natto_token_backup__ && !localStorage.getItem('natto-gist-cfg')) {
       localStorage.setItem('natto-gist-cfg', window.__natto_token_backup__);
@@ -3130,53 +3208,36 @@ function init() {
     }
   } catch(e) {}
 
-  // FIX #5: Tentar recuperar do IndexedDB se localStorage estiver vazio/corrompido
-  const lsData = localStorage.getItem(SKEY);
-  if (!lsData) {
-    loadFromIndexedDB().then(idbData => {
-      if (idbData && idbData.plans && idbData.plans.length) {
-        console.log('[Natto] Recuperando dados do IndexedDB (offline backup)');
-        restorePlans(idbData);
-        notify('♻️ Dados recuperados do backup offline', 'warn');
-      }
-    }).catch(() => {});
+  // ── Ordem obrigatória de inicialização (IDB first) ────────────────────────
+  // 1. Inicializar banco de dados
+  try { await openDB(); } catch(e) { console.error('[IDB] Falha ao abrir DB:', e); }
+
+  // 2. Carregar usuário
+  initUser();
+
+  // 3. Carregar dados locais (IDB) — interface disponível imediatamente
+  const localOk = await carregarLocal();
+  if (!localOk) {
+    // Sem dados locais: renderizar estado vazio
+    renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
   }
 
-  // Limpar evidências corrompidas do cache local
-  try {
-    const cached = localStorage.getItem(SKEY);
-    if (cached) {
-      const data = JSON.parse(cached);
-      if (data && data.plans) {
-        let cleaned = false;
-        data.plans.forEach(p => {
-          if (!p.evidences) return;
-          const before = p.evidences.length;
-          p.evidences = p.evidences.filter(e => {
-            if (!e.url && !e.dataUrl) return false;
-            if (e.url && (e.url.includes('/repos/') || e.url.includes('repos.'))) return false;
-            return true;
-          });
-          if (p.evidences.length < before) cleaned = true;
-        });
-        if (cleaned) {
-          saveLocalCache();
-        }
-      }
-    }
-  } catch(e) {}
+  // 4. Modal de usuário se necessário
+  if (!currentUser) {
+    setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 800);
+  }
 
-  initUser();
-  renderChips();
-  renderProcChips();
-  renderDash();
-  renderSB();
-  updTopbar();
-  carregarDados();
-  if (!currentUser) setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 1200);
-  // Auto-refresh: recarregar do Gist a cada 60s para ver edições de outros colaboradores
+  // 5. Verificar quota de armazenamento
+  setTimeout(checkStorageQuota, 3000);
+
+  // 6. Sincronizar com Gist em background (não bloqueia a UI)
+  setTimeout(() => carregarDados(), 1500);
+
+  // 7. Auto-refresh a cada 60s — só se online e sem edições pendentes
   setInterval(() => {
-    if (!_saving && document.visibilityState === 'visible') carregarDados();
+    if (!_saving && !_hasPendingSave && document.visibilityState === 'visible' && navigator.onLine) {
+      carregarDados();
+    }
   }, 60000);
 }
 
@@ -3196,28 +3257,27 @@ init();
 
 // ── Salvar no localStorage ao fechar/recarregar (garante cache local) ────────
 // FIX #2: Salvamento imediato em eventos críticos — nunca dependendo só do debounce
-window.addEventListener('beforeunload', function(e) {
-  saveLocalCache();
-  saveToIndexedDB(mkLocalPayload()); // IndexedDB também (assíncrono, best-effort)
-});
-
-// FIX #2: Salvar quando aba fica oculta (usuário muda de aba ou minimiza)
-document.addEventListener('visibilitychange', function() {
+// Persistir no IDB antes de fechar/trocar aba
+window.addEventListener('beforeunload', () => { persistPlans(); });
+window.addEventListener('pagehide',     () => { persistPlans(); });
+document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
-    saveLocalCache();
-    // Tentar salvar na nuvem se houver alterações pendentes
-    if (_pendingSaveCount > 0 && !_saving) {
-      salvarDados(true);
-    }
-  } else if (document.visibilityState === 'visible') {
-    // Recarregar do Gist ao voltar para a aba
-    if (!_saving) setTimeout(() => carregarDados(), 1000);
+    persistPlans();
+    if (_pendingSaveCount > 0 && !_saving) salvarDados(true);
+  } else if (document.visibilityState === 'visible' && navigator.onLine) {
+    // Recarregar somente se não há edições pendentes
+    if (!_hasPendingSave && !_saving) setTimeout(() => carregarDados(), 1500);
   }
 });
 
-// FIX #2: pagehide para iOS/Safari
-window.addEventListener('pagehide', function() {
-  saveLocalCache();
+// Reconectar online
+window.addEventListener('online', () => {
+  setSyncState('saving', '🟡 Reconectando...');
+  notify('🌐 Conexão restaurada — sincronizando...');
+  setTimeout(() => salvarDados(false), 1000);
+});
+window.addEventListener('offline', () => {
+  setSyncState('warn', '⚠ Offline — dados salvos no IDB');
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -3413,6 +3473,9 @@ function delObsItem(pid, idx) {
   saveImmediate('obs_removed'); // FIX #2: salvar imediatamente
 }
 
+</script>
+
+</body></html>
 </script>
 
 </body></html>
