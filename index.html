@@ -950,10 +950,12 @@ function clearGistCfg() { localStorage.removeItem(CFG_KEY); }
 
 let autoSaveTimer = null;
 let _saving = false;
+let _attachments = {};  // { id: { name, type, size, data } }
 
 // Serializar estado para salvar
 function mkPayload() {
   return {
+    attachments: _attachments,   // base64 dos arquivos anexados
     plans: plans.map(p => ({
       ...p,
       evidences: (p.evidences || []).map(e => ({
@@ -1090,6 +1092,10 @@ function cloudLoad() { return carregarDados(); }
 function restorePlans(data) {
   if (!data || !data.plans || !data.plans.length) return false;
   let _evidencesCleaned = false;
+  // Restaurar attachments
+  if (data.attachments && typeof data.attachments === 'object') {
+    _attachments = data.attachments;
+  }
   plans = data.plans;
   // Migrar p.obs legado para obsLog
   plans.forEach(p => {
@@ -1666,37 +1672,38 @@ function downloadEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
   if (!ev) return notify('Arquivo não encontrado', 'warn');
-  const target = ev.url || ev.dataUrl;
+  const att = ev.attId ? _attachments[ev.attId] : null;
+  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
   if (!target) return notify('Arquivo não disponível', 'warn');
-  window.open(target, '_blank');
+  const a = Object.assign(document.createElement('a'), {href: target, download: ev.name});
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 function openEv(pid, idx) {
   const p = plans.find(x => x.id===pid); if (!p) return;
   const ev = p.evidences[idx];
   if (!ev) return notify('Arquivo não encontrado', 'warn');
-  // Preferir URL do GitHub; fallback para dataUrl (evidências antigas)
-  const target = ev.url || ev.dataUrl;
-  if (!target) return notify('Arquivo não disponível — pode ter sido removido do GitHub', 'warn');
-  window.open(target, '_blank');
+  // Buscar pelo attId no dicionário de attachments
+  const att = ev.attId ? _attachments[ev.attId] : null;
+  const target = (att && att.data) ? att.data : (ev.url || ev.dataUrl);
+  if (!target) return notify('Arquivo não disponível', 'warn');
+  // Abrir em nova aba
+  const w = window.open('', '_blank');
+  if (w) {
+    if (target.startsWith('data:')) {
+      w.document.write('<html><body style="margin:0"><iframe src="' + target + '" style="width:100%;height:100vh;border:none"></iframe></body></html>');
+    } else {
+      w.location.href = target;
+    }
+  }
 }
 async function remEv(pid, idx) {
   const p = plans.find(x => x.id===pid);
   if (!p) return;
   const ev = p.evidences[idx];
   // Tentar deletar o arquivo do GitHub também
-  if (ev && ev.gistId && ev.fileKey) {
-    const cfg = getGistCfg();
-    if (cfg) {
-      try {
-        const files = {};
-        files[ev.fileKey] = null; // null = deletar o arquivo do Gist
-        await fetch('https://api.github.com/gists/' + ev.gistId, {
-          method: 'PATCH',
-          headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files })
-        });
-      } catch(e) {}
-    }
+  // Remover do dicionário de attachments
+  if (ev && ev.attId && _attachments[ev.attId]) {
+    delete _attachments[ev.attId];
   }
   if (p) { p.evidences.splice(idx,1); renderDetail(); notify('Evidência removida'); scheduleAutoSave(); }
 }
@@ -1708,78 +1715,50 @@ function trigUp(pid) {
 function hDrop(e, pid) { e.preventDefault(); e.currentTarget.classList.remove('dg'); addFs(pid, [...e.dataTransfer.files]); }
 function addFs(pid, files) {
   const p = plans.find(x => x.id===pid); if (!p) return;
-  const cfg = getGistCfg();
-  if (!cfg) { notify('Configure o token GitHub antes de anexar arquivos.', 'warn'); return; }
 
-  notify('⏳ Enviando ' + files.length + ' arquivo(s)...', 'ok');
+  notify('⏳ Processando ' + files.length + ' arquivo(s)...', 'ok');
   let done = 0;
 
-  files.forEach(async file => {
-    try {
-      // Ler como base64 completo (data URL)
-      const dataUrl = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload  = e => res(e.target.result);
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const dataUrl = e.target.result;  // base64 completo com prefixo data:...
+        const attId   = uid();            // ID único permanente
 
-      // Salvar no Gist de anexos (só escopo 'gist' necessário)
-      const fileKey  = Date.now() + '_' + file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const gistFiles = {};
-      gistFiles[fileKey] = { content: dataUrl };
+        // Salvar no dicionário global de attachments
+        _attachments[attId] = {
+          name: file.name,
+          type: file.type,
+          size: fSz(file.size),
+          data: dataUrl               // base64 permanente — salvo no Gist
+        };
 
-      // Criar ou atualizar o Gist de anexos
-      const attachGistId = localStorage.getItem('natto-attach-gist');
-      let method = 'POST';
-      let url    = 'https://api.github.com/gists';
-      if (attachGistId) { method = 'PATCH'; url = 'https://api.github.com/gists/' + attachGistId; }
+        p.evidences.push({
+          name:  file.name,
+          size:  fSz(file.size),
+          type:  file.type,
+          attId: attId,               // referência ao attachment
+          url:   null,
+          dataUrl: null
+        });
 
-      const upRes = await fetch(url, {
-        method,
-        headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: 'Natto PA — Anexos de evidências',
-          public: false,
-          files: gistFiles
-        })
-      });
-
-      if (!upRes.ok) {
-        const err = await upRes.json();
-        throw new Error(err.message || 'HTTP ' + upRes.status);
+        done++;
+        if (done === files.length) {
+          renderDetail();
+          notify('✅ ' + files.length + ' arquivo(s) anexado(s)!');
+          scheduleAutoSave();         // salva tudo no Gist incluindo os attachments
+        }
+      } catch(err) {
+        notify('❌ Erro ao processar ' + file.name + ': ' + err.message, 'err');
+        done++;
       }
-
-      const upData = await upRes.json();
-      // Salvar o ID do Gist de anexos para uso futuro
-      if (!attachGistId) localStorage.setItem('natto-attach-gist', upData.id);
-
-      // URL raw para acesso direto ao arquivo
-      const fileUrl = upData.files[fileKey] ? upData.files[fileKey].raw_url : null;
-
-      p.evidences.push({
-        name:    file.name,
-        size:    fSz(file.size),
-        type:    file.type,
-        dataUrl: null,
-        url:     fileUrl,
-        gistId:  upData.id,
-        fileKey: fileKey
-      });
-
+    };
+    reader.onerror = () => {
+      notify('❌ Erro ao ler ' + file.name, 'err');
       done++;
-      if (done === files.length) {
-        renderDetail();
-        notify('✅ ' + files.length + ' arquivo(s) anexado(s) com sucesso!');
-        scheduleAutoSave();
-      }
-    } catch(err) {
-      done++;
-      notify('❌ Erro ao enviar ' + file.name + ': ' + err.message, 'err');
-      if (done === files.length && p.evidences.length) {
-        renderDetail(); scheduleAutoSave();
-      }
-    }
+    };
+    reader.readAsDataURL(file);
   });
 }
 
@@ -1788,7 +1767,7 @@ function evHtml(p) {
     <div class="ei">
       <span class="ei-icon" onclick="openEv('${p.id}',${i})">${fIcon(e.name)}</span>
       <span class="en" onclick="openEv('${p.id}',${i})" title="Clique para abrir">${e.name}</span>
-      <span class="ei-sz">${e.size}</span>
+      <span class="ei-sz">${(_attachments[e.attId]||{}).size||e.size}</span>
       <div class="ei-btns">
         <button class="ei-btn ei-dl" onclick="downloadEv('${p.id}',${i})">⬇ Baixar</button>
         <button class="ei-btn ei-rm" onclick="remEv('${p.id}',${i})">×</button>
