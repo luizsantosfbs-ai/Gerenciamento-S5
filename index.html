@@ -1092,9 +1092,8 @@ async function carregarDados() {
     if (!mainFile) throw new Error('Arquivo de dados não encontrado no Gist');
     let mainText = mainFile.content || '';
     if (mainFile.truncated || mainText.length < 3) {
-      const r = await fetch(mainFile.raw_url, {
-        headers: { 'Authorization': 'token ' + cfg.token }
-      });
+      // raw_url não aceita Authorization cross-origin — buscar sem header
+      const r = await fetch(mainFile.raw_url);
       mainText = await r.text();
     }
     const data = JSON.parse(mainText);
@@ -1105,9 +1104,8 @@ async function carregarDados() {
       let attachText = attachFile.content || '';
       if (attachFile.truncated || attachText.length < 3) {
         try {
-          const r = await fetch(attachFile.raw_url, {
-            headers: { 'Authorization': 'token ' + cfg.token }
-          });
+          // raw_url não aceita Authorization cross-origin — buscar sem header
+          const r = await fetch(attachFile.raw_url);
           attachText = await r.text();
         } catch(ae) {}
       }
