@@ -1106,9 +1106,11 @@ function restorePlans(data) {
         if (e.url) {
           // Remover URLs que claramente não têm owner/repo corretos
           // api.github.com/repos.arquivo = owner/repo virou parte do nome
-          if (e.url.includes('repos.') || e.url.includes('repos//')  ||
-              e.url.match(/repos\/[^/]+\.[^/]+$/)) {
-            return false; // URL malformada
+          // Remover qualquer URL apontando para API de repositório (não é acesso direto)
+          if (e.url.includes('api.github.com/repos') ||
+              e.url.includes('repos.') ||
+              e.url.includes('repos//')) {
+            return false; // URL de API de repositório — não funciona como download_url
           }
         }
         return true;
@@ -2741,6 +2743,30 @@ function init() {
     }
     if (window.__natto_user_backup__ && !localStorage.getItem('natto-pa-s5-user')) {
       localStorage.setItem('natto-pa-s5-user', window.__natto_user_backup__);
+    }
+  } catch(e) {}
+
+  // Limpar evidências corrompidas do cache local
+  try {
+    const cached = localStorage.getItem(SKEY);
+    if (cached) {
+      const data = JSON.parse(cached);
+      if (data && data.plans) {
+        let cleaned = false;
+        data.plans.forEach(p => {
+          if (!p.evidences) return;
+          const before = p.evidences.length;
+          p.evidences = p.evidences.filter(e => {
+            if (!e.url && !e.dataUrl) return false;
+            if (e.url && (e.url.includes('/repos/') || e.url.includes('repos.'))) return false;
+            return true;
+          });
+          if (p.evidences.length < before) cleaned = true;
+        });
+        if (cleaned) {
+          localStorage.setItem(SKEY, JSON.stringify(data));
+        }
+      }
     }
   } catch(e) {}
 
