@@ -1626,7 +1626,8 @@ function savePlan(id) {
   const sa = document.getElementById('fs').value.trim();
   const se = [...new Set(fActs.map(a => a.setor).filter(Boolean))];
   if (sa && !se.includes(sa)) se.unshift(sa);
-  const obsEl = document.getElementById('fobs');
+  const idx = plans.findIndex(x => x.id===id);
+  const existing = idx >= 0 ? plans[idx] : null;
   const p = {
     id, title:t, empresa:document.getElementById('fe').value.trim(),
     processo:document.getElementById('fp').value.trim()||'S5',
@@ -1634,10 +1635,9 @@ function savePlan(id) {
     deadline:document.getElementById('fd').value, status:document.getElementById('fst').value,
     gs, gp:document.getElementById('fgp').value, gc:'—',
     obs: '',
-    obsLog: (idx >= 0 ? plans[idx].obsLog : null) || [],
+    obsLog: (existing ? existing.obsLog : null) || [],
     actions:fActs.map(a => ({...a})), evidences:fEvs
   };
-  const idx = plans.findIndex(x => x.id===id);
   if (idx>=0) plans[idx]=p; else plans.unshift(p);
   plans.sort((a,b) => b.gs-a.gs || a.title.localeCompare(b.title));
   bRM(); cur=p; renderChips(); renderProcChips(); renderDetail(); renderSB();
