@@ -1014,7 +1014,11 @@ async function salvarDados(silent = false) {
       } })
     });
     if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: 401});
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      let errBody = '';
+      try { const j = await res.json(); errBody = j.message || ''; } catch(je) {}
+      throw new Error('HTTP ' + res.status + (errBody ? ': ' + errBody : ''));
+    }
 
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
     setSyncState('ok', '☁ Salvo ' + ts);
@@ -1033,11 +1037,11 @@ async function salvarDados(silent = false) {
         );
       }
     } else {
-      setSyncState('warn', '⚠ Sem conexão');
+      // Mostrar erro real para diagnóstico
+      const msg = e.message || String(e);
+      setSyncState('warn', '⚠ Erro: ' + msg.slice(0,40));
+      notify('❌ Erro ao salvar: ' + msg, 'err');
       localStorage.setItem('natto-gist-pendente', '1');
-      if (!silent) notify('⚠ Sem conexão — tentando novamente em 30s', 'warn');
-      // Tentar novamente em 30s automaticamente
-      setTimeout(() => { if (_saving === false) salvarDados(true); }, 30000);
     }
   } finally { _saving = false; }
 }
