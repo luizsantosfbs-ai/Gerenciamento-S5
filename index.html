@@ -895,8 +895,9 @@ const RAW={};
 // ══════════════════════════════════════════════════════════════════════════════
 // PERSISTÊNCIA — GitHub Gist (nuvem) + localStorage (cache local)
 // ══════════════════════════════════════════════════════════════════════════════
-const SKEY         = 'natto-pa-s5';
-const GIST_FILENAME = 'natto-pa-s5.json';
+const SKEY              = 'natto-pa-s5';
+const GIST_FILENAME      = 'natto-pa-s5.json';
+const GIST_ATTACH_FILE   = 'natto-pa-s5-attachments.json';
 const CFG_KEY      = 'natto-gist-cfg';
 const GIST_ID      = '819172f79e3cf13ee43ca95c145595e9'; // ID fixo — não é segredo
 // Repositório GitHub para armazenar anexos (arquivos grandes)
@@ -954,17 +955,17 @@ let _attachments = {};  // { id: { name, type, size, data } }
 
 // Serializar estado para salvar
 function mkPayload() {
+  // Payload principal — SEM base64 (evita estouro do limite 1MB do Gist)
   return {
-    attachments: _attachments,   // base64 dos arquivos — indexados por attId
     plans: plans.map(p => ({
       ...p,
       evidences: (p.evidences || []).map(e => ({
         name:    e.name    || '',
         size:    e.size    || '',
         type:    e.type    || '',
-        attId:   e.attId   || '',   // referência ao attachment — ESSENCIAL
+        attId:   e.attId   || '',
         url:     e.url     || '',
-        dataUrl: e.dataUrl || ''
+        dataUrl: ''          // nunca salvar base64 no arquivo principal
       })),
       obsLog: p.obsLog || []
     })),
@@ -972,6 +973,11 @@ function mkPayload() {
     savedAt: new Date().toISOString(),
     version: 14
   };
+}
+
+function mkAttachPayload() {
+  // Payload separado só com os base64 — salvo em arquivo separado no Gist
+  return { attachments: _attachments };
 }
 
 // Auto-save com debounce de 3 s
@@ -1002,7 +1008,10 @@ async function salvarDados(silent = false) {
     const res = await fetch('https://api.github.com/gists/' + cfg.id + '?t=' + Date.now(), {
       method: 'PATCH',
       headers: { 'Authorization': 'token ' + cfg.token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ files: { [GIST_FILENAME]: { content: JSON.stringify(payload, null, 2) } } })
+      body: JSON.stringify({ files: {
+        [GIST_FILENAME]:      { content: JSON.stringify(payload) },
+        [GIST_ATTACH_FILE]:   { content: JSON.stringify(mkAttachPayload()) }
+      } })
     });
     if (res.status === 401 || res.status === 403) throw Object.assign(new Error('auth'), {code: 401});
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1061,13 +1070,21 @@ async function carregarDados() {
     const file  = gist.files[GIST_FILENAME];
 
     if (file && file.content && file.content.trim().length > 2) {
-      // Gist é a fonte da verdade — sempre prevalece sobre qualquer coisa local
       const data = JSON.parse(file.content);
+
+      // Carregar attachments do arquivo separado no mesmo Gist
+      const attachFile = gist.files[GIST_ATTACH_FILE];
+      if (attachFile && attachFile.content && attachFile.content.length > 2) {
+        try {
+          const ad = JSON.parse(attachFile.content);
+          if (ad && ad.attachments) _attachments = ad.attachments;
+        } catch(ae) {}
+      }
+      data.attachments = _attachments;
+
       localStorage.setItem(SKEY, JSON.stringify(data));
       localStorage.removeItem('natto-gist-pendente');
-      const changed = restorePlans(data);
-      // Se o restorePlans limpou evidências corrompidas, salvar de volta no Gist
-      if (changed) setTimeout(() => salvarDados(true), 1000);
+      restorePlans(data);
     }
 
     const ts = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
