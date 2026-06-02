@@ -2235,7 +2235,11 @@ function buildPlansFromRaw(raw) {
 let plans = buildPlansFromRaw(RAW);
 let cur = null, filt = 'all', filtSetor = '', filtProc = '', fActs = [], fEvs = [];
 let rm = {};
-function bRM() { plans.forEach((p, i) => rm[p.id] = i+1); }
+function bRM() {
+  // Ordenar por GUT decrescente para numerar corretamente
+  const sorted = plans.slice().sort((a, b) => (b.gs || 0) - (a.gs || 0) || (a.title || '').localeCompare(b.title || ''));
+  sorted.forEach((p, i) => rm[p.id] = i + 1);
+}
 bRM();
 
 // ═══════════════════════════════════════════════════════════
@@ -2247,12 +2251,14 @@ function planMatchProc(p) { return !filtProc || p.processo === filtProc; }
 
 function getFilt() {
   const q = (document.getElementById('sbox') || {}).value || '';
-  let list = plans;
+  let list = plans.slice(); // cópia para não mutar o array original
   if (q) list = list.filter(p => p.title.toLowerCase().includes(q.toLowerCase()) || (p.responsible||'').toLowerCase().includes(q.toLowerCase()));
   if (filt === 'alta' || filt === 'media') list = list.filter(p => p.gp === filt);
   else if (filt !== 'all') list = list.filter(p => p.status === filt);
   if (filtSetor) list = list.filter(p => planMatchSetor(p));
   if (filtProc) list = list.filter(p => planMatchProc(p));
+  // Sempre ordenar por GUT score decrescente, desempate por título
+  list.sort((a, b) => (b.gs || 0) - (a.gs || 0) || (a.title || '').localeCompare(b.title || ''));
   return list;
 }
 
