@@ -354,6 +354,56 @@ input[type=file]{display:none}
 .rpt-footer{font-size:9px;color:var(--g400);text-align:right;padding:.3rem 0}
 @media print{.sb,.tb,.rpt-topbar{display:none!important}.rpt-body{overflow:visible!important}}
 
+/* ── RESUMO SEMANAL ──────────────────────────────────── */
+.rs-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:center;justify-content:center;padding:1rem}
+.rs-overlay.show{display:flex}
+.rs-modal{background:#f3f4f6;border-radius:10px;width:100%;max-width:860px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(0,0,0,.3);font-family:'Segoe UI',Arial,sans-serif;color:#1a1a1a}
+.rs-header{background:#1a4d2e;padding:.85rem 1.1rem;border-radius:10px 10px 0 0;display:flex;align-items:center;justify-content:space-between;gap:.8rem}
+.rs-header-left{display:flex;align-items:center;gap:.75rem}
+.rs-header-icon{width:38px;height:38px;background:rgba(255,255,255,.15);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:20px}
+.rs-header-txt .rs-h1{font-size:15px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.5px}
+.rs-header-txt .rs-h2{font-size:10px;color:rgba(255,255,255,.65);font-weight:500}
+.rs-logo{background:#fff;border-radius:6px;padding:4px 10px;font-size:15px;font-weight:900;color:#1a4d2e;letter-spacing:.5px}
+.rs-body{padding:.85rem}
+.rs-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:.5rem;margin-bottom:.8rem}
+.rs-kpi{background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;padding:.65rem .5rem;text-align:center}
+.rs-kpi-icon{font-size:22px;margin-bottom:2px}
+.rs-kpi-lbl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.3px;margin-bottom:1px}
+.rs-kpi-val{font-size:24px;font-weight:900;line-height:1.1}
+.rs-kpi.kpi-plans .rs-kpi-val{color:#1a4d2e}
+.rs-kpi.kpi-acoes .rs-kpi-val{color:#1d4ed8}
+.rs-kpi.kpi-conc .rs-kpi-val{color:#16a34a}
+.rs-kpi.kpi-atr{border-color:#fca5a5;background:#fff5f5}
+.rs-kpi.kpi-atr .rs-kpi-val{color:#dc2626}
+.rs-kpi.kpi-pct .rs-kpi-val{color:#d97706}
+.rs-kpi.kpi-pct .rs-kpi-bar{height:5px;background:#e5e7eb;border-radius:3px;margin-top:5px;overflow:hidden}
+.rs-kpi.kpi-pct .rs-kpi-bar-fill{height:100%;background:#d97706;border-radius:3px}
+.rs-mid{display:grid;grid-template-columns:1fr 1fr;gap:.65rem;margin-bottom:.8rem}
+.rs-card{background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;padding:.7rem .75rem}
+.rs-card-ttl{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:.45rem;display:flex;align-items:center;gap:5px}
+.rs-card-ttl.pos{color:#1a4d2e}.rs-card-ttl.neg{color:#dc2626}
+.rs-item{display:flex;align-items:flex-start;gap:5px;margin-bottom:.3rem;font-size:11px;line-height:1.4;color:#374151}
+.rs-item-num{min-width:16px;height:16px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0;margin-top:1px}
+.rs-item-num.pos{background:#dcfce7;color:#16a34a}.rs-item-num.neg{background:#fee2e2;color:#dc2626}
+.rs-tbl-wrap{background:#fff;border:1.5px solid #e5e7eb;border-radius:8px;overflow:hidden;margin-bottom:.8rem}
+.rs-area-table{width:100%;border-collapse:collapse;font-size:11.5px}
+.rs-area-table thead tr{background:#1a4d2e}
+.rs-area-table thead th{padding:7px 9px;font-size:10.5px;font-weight:700;color:#fff;text-align:left;white-space:nowrap}
+.rs-area-table thead th:not(:first-child){text-align:center}
+.rs-area-table tbody tr:nth-child(even){background:#f9fafb}
+.rs-area-table tbody tr:hover{background:#f0fdf4}
+.rs-area-table td{padding:7px 9px;border-bottom:1px solid #e5e7eb;vertical-align:middle}
+.rs-area-table td:not(:first-child){text-align:center;font-weight:600}
+.rs-prog-wrap{display:flex;align-items:center;gap:6px}
+.rs-prog-bar{flex:1;height:9px;background:#e5e7eb;border-radius:5px;overflow:hidden;min-width:55px}
+.rs-prog-fill{height:100%;border-radius:5px}
+.rs-pct-lbl{font-size:11px;font-weight:700;min-width:34px;text-align:right}
+.rs-close-btn{background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer}
+.rs-close-btn:hover{background:rgba(255,255,255,.28)}
+.rs-actions{display:flex;gap:.5rem;padding:.6rem .9rem .8rem;justify-content:flex-end;border-top:1px solid #e5e7eb;background:#fff;border-radius:0 0 10px 10px}
+.rs-btn{padding:7px 16px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;border:none}
+.rs-btn-print{background:#1a4d2e;color:#fff}.rs-btn-close{background:#f3f4f6;color:#374151;border:1px solid #d1d5db}
+
 /* ═══ FILTRO DE PERÍODO (CALENDÁRIO) ═══ */
 .rpt-period-bar{background:var(--wh);border:1px solid var(--g200);border-radius:8px;padding:.7rem .9rem;margin-bottom:.65rem;display:flex;align-items:center;gap:.65rem;flex-wrap:wrap}
 .rpt-period-bar .period-lbl{font-size:9px;font-weight:700;color:var(--g1);text-transform:uppercase;letter-spacing:.09em;flex-shrink:0}
@@ -447,6 +497,7 @@ input[type=file]{display:none}
       <button id="btn-backup" onclick="fazerBackup()" title="Gera um backup completo (planos + anexos + auditoria) salvo no Gist" style="flex:1;padding:5px 4px;border-radius:6px;border:1px solid rgba(251,191,36,.35);background:rgba(251,191,36,.08);color:#fcd34d;font-size:10px;font-weight:600;cursor:pointer">☁ Backup</button>
       <button id="btn-restore" onclick="restaurarBackup()" title="Restaura todos os dados a partir do último backup salvo no Gist" style="flex:1;padding:5px 4px;border-radius:6px;border:1px solid rgba(167,243,208,.35);background:rgba(167,243,208,.08);color:#6ee7b7;font-size:10px;font-weight:600;cursor:pointer">♻️ Restaurar</button>
     </div>
+    <button onclick="baixarBackupLocal()" title="Baixa um arquivo .json com todos os dados para o seu computador" style="margin-bottom:.3rem;width:100%;padding:5px 8px;border-radius:6px;border:1px solid rgba(167,243,208,.25);background:rgba(167,243,208,.06);color:#6ee7b7;font-size:10px;font-weight:600;cursor:pointer">⬇ Baixar Backup (.json)</button>
     <input class="sx" placeholder="🔍 Buscar plano ou responsável..." id="sbox" oninput="renderSB()">
   </div>
   <div class="sb-sec">
@@ -781,6 +832,7 @@ FBJ.SID.LPP.005 - Lição Ponto a Ponto - Bandejas de Linguiça Petisco em Caixa
       <div class="tbs"></div>
       <div class="tbt">📊 Report de Plano de Ação · Diretoria S5</div>
       <div style="margin-left:auto;display:flex;gap:.4rem">
+        <button class="bc" style="font-size:10.5px;background:#004520;border-color:rgba(149,193,31,.4)" onclick="toggleResumoSemanal()">📋 Resumo Semanal</button>
         <button class="bc" style="font-size:10.5px" onclick="printReport()">🖨 Imprimir</button>
         <button class="bs" style="font-size:10.5px;padding:6px 12px" onclick="closeReport()">← Voltar ao Painel</button>
       </div>
@@ -2003,7 +2055,7 @@ function hDrop(e, pid) {
   addFs(pid, [...e.dataTransfer.files]);
 }
 
-// Buscar dados do attachment (IDB → memória → nulo)
+// Buscar dados do attachment (memória → IDB → Gist)
 async function getAttData(ev) {
   if (!ev || !ev.attId) return null;
   // 1. Memória
@@ -2012,11 +2064,43 @@ async function getAttData(ev) {
   try {
     const rec = await idbLoadAttachment(ev.attId);
     if (rec && rec.dataUrl) {
-      _attachments[ev.attId] = rec; // colocar em memória
+      _attachments[ev.attId] = rec;
       return rec;
     }
   } catch(e) {}
-  return null;
+  // 3. Gist (fallback — busca o arquivo de attachments diretamente)
+  try {
+    const cfg = getGistCfg();
+    if (!cfg) return null;
+    const res = await fetch('https://api.github.com/gists/' + GIST_ID, {
+      headers: { 'Authorization': 'token ' + cfg.token }
+    });
+    if (!res.ok) return null;
+    const gist = await res.json();
+    const attFile = gist.files[GIST_ATTACH_FILE];
+    if (!attFile) return null;
+    let attText = attFile.content || '';
+    if (attFile.truncated || attText.length < 3) {
+      const r = await fetch(attFile.raw_url); attText = await r.text();
+    }
+    const attData = JSON.parse(attText);
+    if (attData && attData.attachments) {
+      // Cachear todos para não ter que buscar de novo
+      for (const [id, att] of Object.entries(attData.attachments)) {
+        if (att && att.dataUrl) {
+          _attachments[id] = { ...att, id };
+          idbSaveAttachment(id, { ...att, id }).catch(() => {});
+        }
+      }
+      // Limpar ETag para forçar sync na próxima verificação
+      try { sessionStorage.removeItem(ATT_ETAG_KEY); } catch(e) {}
+    }
+    const found = _attachments[ev.attId];
+    return (found && found.dataUrl) ? found : null;
+  } catch(e) {
+    console.warn('[getAttData] Gist fallback falhou:', e);
+    return null;
+  }
 }
 
 function downloadEv(pid, idx) {
@@ -2024,7 +2108,7 @@ function downloadEv(pid, idx) {
   const ev = p.evidences[idx]; if (!ev) return notify('Arquivo não encontrado', 'warn');
   getAttData(ev).then(att => {
     const target = (att && att.dataUrl) ? att.dataUrl : (ev.url || null);
-    if (!target) return notify('Arquivo não disponível — pode não ter sido sincronizado', 'warn');
+    if (!target) return notify('Arquivo não disponível — buscando no Gist...', 'warn');
     const a = Object.assign(document.createElement('a'), { href: target, download: ev.name });
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   });
@@ -2033,9 +2117,12 @@ function downloadEv(pid, idx) {
 function openEv(pid, idx) {
   const p = plans.find(x => x.id === pid); if (!p) return;
   const ev = p.evidences[idx]; if (!ev) return notify('Arquivo não encontrado', 'warn');
+  // Mostrar feedback imediato se não estiver em memória
+  const inMem = ev.attId && _attachments[ev.attId] && _attachments[ev.attId].dataUrl;
+  if (!inMem) notify('🔄 Buscando arquivo...', 'info');
   getAttData(ev).then(att => {
     const target = (att && att.dataUrl) ? att.dataUrl : (ev.url || null);
-    if (!target) return notify('Arquivo não disponível', 'warn');
+    if (!target) return notify('Arquivo não encontrado no Gist', 'warn');
     const w = window.open('', '_blank');
     if (w) {
       if (target.startsWith('data:')) {
@@ -3616,6 +3703,10 @@ async function init() {
     bRM(); renderChips(); renderProcChips(); renderDash(); renderSB(); updTopbar();
   }
 
+  // Mostrar "ok" imediatamente com os dados do IDB — não esperar o Gist
+  _lastSavedAt = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  setSyncState('ok', `🟢 Dados locais ${_lastSavedAt}`);
+
   // 5. Modal de usuário se necessário
   if (!currentUser) {
     setTimeout(() => document.getElementById('user-modal').style.display = 'flex', 800);
@@ -3886,10 +3977,225 @@ function delObsItem(pid, idx) {
   notify('Observação removida');
   saveImmediate('obs_removed'); // FIX #2: salvar imediatamente
 }
+// ── BAIXAR BACKUP LOCAL ───────────────────────────────────────────────────────
+async function baixarBackupLocal() {
+  try {
+    const plansPayload = await mkGistPayload();
+    const attsPayload  = mkAttachGistPayload();
+    const backup = {
+      plans:       plansPayload.plans,
+      audit:       plansPayload.audit,
+      attachments: attsPayload.attachments,
+      version:     plansPayload.version,
+      timestamp:   new Date().toISOString(),
+      exportedBy:  getUser()
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const ts   = new Date().toISOString().slice(0,10);
+    const a    = Object.assign(document.createElement('a'), {
+      href: url,
+      download: 'natto-s5-backup-' + ts + '.json'
+    });
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    notify('✅ Backup baixado com sucesso!');
+  } catch(e) {
+    notify('❌ Erro ao baixar backup: ' + (e.message || String(e)), 'err');
+  }
+}
+
+// ── RESUMO SEMANAL ────────────────────────────────────────────────────────────
+var _rsVisible = false;
+
+function toggleResumoSemanal() {
+  if (_rsVisible) { closeResumoSemanal(); } else { openResumoSemanal(); }
+}
+
+function openResumoSemanal() {
+  var ov = document.getElementById('rs-overlay');
+  if (!ov) return;
+  renderResumoSemanal();
+  ov.classList.add('show');
+  _rsVisible = true;
+}
+
+function closeResumoSemanal() {
+  var ov = document.getElementById('rs-overlay');
+  if (ov) ov.classList.remove('show');
+  _rsVisible = false;
+}
+
+function printResumoSemanal() {
+  var modal = document.getElementById('rs-modal');
+  if (!modal) return;
+  var w = window.open('', '_blank');
+  w.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Resumo Semanal S5</title><style>');
+  w.document.write('body{font-family:Segoe UI,Arial,sans-serif;margin:0;padding:1rem;color:#1a1a1a;background:#f3f4f6}');
+  w.document.write(document.querySelector('style') ? document.querySelector('style').textContent : '');
+  // Copiar todos os styles relevantes rs-*
+  var allStyles = Array.from(document.styleSheets).map(function(ss){
+    try { return Array.from(ss.cssRules).map(function(r){return r.cssText;}).join('\n'); } catch(e){ return ''; }
+  }).join('\n');
+  w.document.write(allStyles + '</style></head><body>');
+  w.document.write(modal.outerHTML);
+  w.document.write('</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(function(){ w.print(); }, 500);
+}
+
+var SETOR_ICONS = {
+  'PCP': '📊', 'Controle de Qualidade': '🛡', 'TI': '🖥',
+  'Controladoria': '💲', 'Manutenção': '🔧', 'Administração Produção': '🏭',
+  'Processos': '⚙', 'GG': '👥', 'Produção': '🏭', 'P&D': '🔬'
+};
+
+function renderResumoSemanal() {
+  var el = document.getElementById('rs-body');
+  if (!el) return;
+
+  var today = new Date().toLocaleDateString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric'});
+  var dateEl = document.getElementById('rs-date');
+  if (dateEl) dateEl.textContent = 'Atualizado em: ' + today;
+
+  // ── Métricas globais (usa todos os planos, sem filtro de período) ──
+  var totalPlanos  = plans.length;
+  var totalAcoes   = 0, totalConc = 0, totalAtr = 0;
+  plans.forEach(function(p) {
+    p.actions.forEach(function(a) {
+      totalAcoes++;
+      if (a.status === 'concluido') totalConc++;
+      if (a.status === 'atrasado' || (a.when && a.status !== 'concluido' && new Date(a.when) < new Date())) {
+        if (a.status === 'atrasado') totalAtr++;
+      }
+    });
+  });
+  var pctGlobal = totalAcoes > 0 ? Math.round((totalConc / totalAcoes) * 100) : 0;
+
+  // ── Por Área ──────────────────────────────────────────────────────────
+  var setorMap = {};
+  plans.forEach(function(p) {
+    var setores = p.setoresAcoes && p.setoresAcoes.length ? p.setoresAcoes : [p.setor || 'Sem Setor'];
+    setores.forEach(function(setor) {
+      if (!setor) return;
+      if (!setorMap[setor]) setorMap[setor] = { planos: new Set(), acoes: 0, conc: 0, atr: 0 };
+      setorMap[setor].planos.add(p.id);
+    });
+    p.actions.forEach(function(a) {
+      var s = (a.setor || p.setor || 'Sem Setor').trim();
+      if (!setorMap[s]) setorMap[s] = { planos: new Set(), acoes: 0, conc: 0, atr: 0 };
+      setorMap[s].acoes++;
+      if (a.status === 'concluido') setorMap[s].conc++;
+      if (a.status === 'atrasado')  setorMap[s].atr++;
+    });
+  });
+
+  var setorRows = Object.entries(setorMap).map(function(kv) {
+    var s = kv[0], d = kv[1];
+    var pl = d.planos.size, ac = d.acoes, co = d.conc, at = d.atr;
+    var pct = ac > 0 ? Math.round((co / ac) * 100) : 0;
+    return { setor: s, planos: pl, acoes: ac, conc: co, atr: at, pct: pct };
+  }).sort(function(a, b) { return b.acoes - a.acoes; });
+
+  // ── Destaques e Alertas ──────────────────────────────────────────────
+  var atrasados = plans.filter(function(p){ return p.status === 'atrasado'; });
+  var setoresComAtraso = setorRows.filter(function(s){ return s.atr > 0; }).map(function(s){ return s.setor; });
+
+  var destaques = [];
+  var top = setorRows.filter(function(s){ return s.pct >= 80 && s.acoes > 0; });
+  if (top.length > 0) destaques.push('Implantação das reuniões de acompanhamento no formato Scrum com os setores envolvidos, proporcionando alinhamento e controle da execução dos planos de ação.');
+  destaques.push('Evolução no mapeamento das atividades dos processos, contribuindo na padronização operacional.');
+  if (top.length > 0) top.slice(0,2).forEach(function(s){ destaques.push(s.setor + ' com ' + s.pct + '% de conclusão das ações previstas.'); });
+
+  var alertas = [];
+  if (totalAtr > 0) alertas.push('Baixa aderência aos prazos estabelecidos nos planos de ação, impactando o ritmo de execução das atividades planejadas;');
+  alertas.push('Morosidade na análise e aprovação de procedimentos por parte dos gestores das áreas;');
+  if (setoresComAtraso.length > 1) alertas.push('Necessidade de maior integração e comunicação entre os setores que compartilham responsabilidades dentro dos mesmos planos de ação, visando reduzir retrabalhos e atrasos.');
+  var semsAcoesConcluidas = plans.filter(function(p){ return p.actions.some(function(a){ return a.status === 'atrasado'; }); });
+  if (semsAcoesConcluidas.length > 0) alertas.push('Pendente definição da tratativa para as ocorrências identificadas nos planos com ações atrasadas.');
+
+  // ── RENDER ────────────────────────────────────────────────────────────
+  var h = '';
+
+  // KPIs
+  h += '<div class="rs-kpis">';
+  h += '<div class="rs-kpi kpi-plans"><div class="rs-kpi-icon">📋</div><div class="rs-kpi-lbl">Planos</div><div class="rs-kpi-val">' + totalPlanos + '</div></div>';
+  h += '<div class="rs-kpi kpi-acoes"><div class="rs-kpi-icon">⚙</div><div class="rs-kpi-lbl">Ações</div><div class="rs-kpi-val">' + totalAcoes + '</div></div>';
+  h += '<div class="rs-kpi kpi-conc"><div class="rs-kpi-icon">✅</div><div class="rs-kpi-lbl">Ações Concluídas</div><div class="rs-kpi-val">' + totalConc + '</div></div>';
+  h += '<div class="rs-kpi kpi-atr"><div class="rs-kpi-icon">📅</div><div class="rs-kpi-lbl">Ações Atrasadas</div><div class="rs-kpi-val">' + totalAtr + '</div></div>';
+  h += '<div class="rs-kpi kpi-pct"><div class="rs-kpi-icon">📈</div><div class="rs-kpi-lbl">% Conclusão Geral</div><div class="rs-kpi-val">' + pctGlobal + '%</div>';
+  h += '<div class="rs-kpi-bar"><div class="rs-kpi-bar-fill" style="width:' + pctGlobal + '%"></div></div>';
+  h += '</div></div>';
+
+  // Destaques + Alertas
+  h += '<div class="rs-mid">';
+  h += '<div class="rs-card"><div class="rs-card-ttl pos">🏆 Destaques Positivos</div>';
+  destaques.forEach(function(d, i) {
+    h += '<div class="rs-item"><span class="rs-item-num pos">' + (i+1) + '</span><span>' + d + '</span></div>';
+  });
+  h += '</div>';
+  h += '<div class="rs-card"><div class="rs-card-ttl neg">⚠ Alertas</div>';
+  alertas.forEach(function(a, i) {
+    h += '<div class="rs-item"><span class="rs-item-num neg">' + (i+1) + '</span><span>' + a + '</span></div>';
+  });
+  h += '</div></div>';
+
+  // Tabela por Área
+  h += '<div class="rs-tbl-wrap"><table class="rs-area-table"><thead><tr>';
+  h += '<th>Área</th><th>Planos</th><th>Ações</th><th>Concluídas</th><th>Atrasadas</th><th>% Conclusão</th>';
+  h += '</tr></thead><tbody>';
+  setorRows.forEach(function(s) {
+    var barColor = s.pct >= 80 ? '#16a34a' : s.pct >= 40 ? '#d97706' : '#dc2626';
+    var atrColor = s.atr > 0 ? 'color:#dc2626' : 'color:#374151';
+    var icon = SETOR_ICONS[s.setor] || '📁';
+    h += '<tr>';
+    h += '<td><span style="font-size:14px;margin-right:5px;vertical-align:middle">' + icon + '</span><strong>' + s.setor + '</strong></td>';
+    h += '<td>' + s.planos + '</td>';
+    h += '<td>' + s.acoes + '</td>';
+    h += '<td style="color:#16a34a">' + s.conc + '</td>';
+    h += '<td style="' + atrColor + '">' + s.atr + '</td>';
+    h += '<td><div class="rs-prog-wrap">';
+    h += '<div class="rs-prog-bar"><div class="rs-prog-fill" style="width:' + s.pct + '%;background:' + barColor + '"></div></div>';
+    h += '<span class="rs-pct-lbl" style="color:' + barColor + '">' + s.pct + '%</span>';
+    h += '</div></td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table></div>';
+
+  el.innerHTML = h;
+}
+
 
 </script>
 
 </body></html>
 </script>
+
+
+<!-- RESUMO SEMANAL MODAL -->
+<div class="rs-overlay" id="rs-overlay" onclick="if(event.target===this)closeResumoSemanal()">
+  <div class="rs-modal" id="rs-modal">
+    <div class="rs-header">
+      <div class="rs-header-left">
+        <div class="rs-header-icon">📋</div>
+        <div class="rs-header-txt">
+          <div class="rs-h1">Resumo Semanal – Planos de Ação | S5</div>
+          <div class="rs-h2" id="rs-date">Atualizado em: --/--/----</div>
+        </div>
+      </div>
+      <img src="data:image/png;base64,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" alt="Natto" style="height:48px;object-fit:contain">
+      <button class="rs-close-btn" onclick="closeResumoSemanal()">✕ Fechar</button>
+    </div>
+    <div class="rs-body" id="rs-body">
+      <!-- preenchido por renderResumoSemanal() -->
+    </div>
+    <div class="rs-actions">
+      <button class="rs-btn rs-btn-print" onclick="printResumoSemanal()">🖨 Imprimir</button>
+      <button class="rs-btn rs-btn-close" onclick="closeResumoSemanal()">Fechar</button>
+    </div>
+  </div>
+</div>
 
 </body></html>
