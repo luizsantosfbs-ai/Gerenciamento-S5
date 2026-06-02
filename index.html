@@ -1476,6 +1476,15 @@ async function salvarDados(silent = false) {
   // 1. Persistir localmente primeiro (IDB, nunca falha)
   await persistPlans();
 
+  // Detectar file:// — salvar só no IDB, sem tentar Gist
+  if (window.location.protocol === 'file:') {
+    _saving = false;
+    _lastSavedAt = new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    setSyncState('ok', `🟢 Salvo localmente ${_lastSavedAt}`);
+    if (!silent) notify('✅ Salvo localmente (modo offline)');
+    return;
+  }
+
   const cfg = getGistCfg();
   if (!cfg) {
     setSyncState('warn', '⚙ Configure a nuvem');
@@ -1559,10 +1568,23 @@ async function salvarDados(silent = false) {
         );
       }
     } else {
-      setSyncState('warn', '⚠ Erro — dados salvos no IDB');
-      notify('❌ Erro: ' + (e.message || String(e)), 'err');
+      const msg = e.message || String(e);
+      const isOffline = !navigator.onLine;
+      const isAuth = msg.includes('401') || msg.includes('403') || msg.includes('Bad credentials');
+      if (isAuth) {
+        setSyncState('err', '🔴 Token inválido');
+        if (!sessionStorage.getItem('natto-token-modal-shown')) {
+          sessionStorage.setItem('natto-token-modal-shown', '1');
+          showGistSetup(
+            () => { sessionStorage.removeItem('natto-token-modal-shown'); salvarDados(false); },
+            '🔑 Token inválido — renove para salvar na nuvem'
+          );
+        }
+      } else {
+        setSyncState('warn', isOffline ? '🟡 Offline — salvo localmente' : '🟡 Falha na nuvem — salvo localmente');
+        if (!silent) notify('⚠ Salvo localmente. Tentando novamente em breve...', 'warn');
+      }
       localStorage.setItem('natto-gist-pendente', '1');
-      // Enfileirar para retry offline
       idbAddPending({ type: 'save', at: new Date().toISOString() }).catch(() => {});
       setTimeout(() => { if (!_saving) salvarDados(true); }, 15000);
     }
@@ -1688,6 +1710,13 @@ async function _syncAttachmentsFromGist(gist) {
 }
 
 async function carregarDados() {
+  // Detectar protocolo file:// — fetch externo é bloqueado pelo browser neste modo
+  if (window.location.protocol === 'file:') {
+    setSyncState('warn', '⚠ Abrir via servidor para sincronizar');
+    console.warn('[Sync] Arquivo aberto via file:// — requisições externas bloqueadas pelo browser. Abra via servidor HTTP ou GitHub Pages para sincronização funcionar.');
+    return;
+  }
+
   const cfg = getGistCfg();
   if (!cfg) {
     setSyncState('warn', '⚙ Configure a nuvem');
@@ -1762,8 +1791,26 @@ async function carregarDados() {
           '🔑 Token expirado — renove para continuar'
         ), 500);
       }
+    } else if (!navigator.onLine || (e.message || '').includes('Failed to fetch') || (e.message || '').includes('NetworkError')) {
+      // Sem internet ou fetch bloqueado
+      setSyncState('ok', '🟡 Offline — dados locais');
     } else {
-      setSyncState('warn', '⚠ Sem conexão — dados do IDB');
+      // Erro de rede/API mas com internet — pode ser token inválido
+      const msg = e.message || String(e);
+      if (msg.includes('401') || msg.includes('403') || msg.includes('Bad credentials')) {
+        setSyncState('err', '🔴 Token inválido');
+        if (!sessionStorage.getItem('natto-token-modal-shown')) {
+          sessionStorage.setItem('natto-token-modal-shown', '1');
+          setTimeout(() => showGistSetup(
+            () => { sessionStorage.removeItem('natto-token-modal-shown'); carregarDados(); },
+            '🔑 Token inválido ou expirado — renove para sincronizar'
+          ), 500);
+        }
+      } else {
+        // Falha temporária — manter dados do IDB sem assustar o usuário
+        setSyncState('warn', '🟡 Sincronização pendente');
+        console.warn('[Sync] Falha ao carregar Gist:', msg);
+      }
     }
   }
 }
@@ -2424,7 +2471,7 @@ function renderDash() {
   const emAnd = fl.filter(p => p.status==='em_andamento').length;
   const susp = fl.filter(p => p.status==='suspenso').length;
 
-  const _ctEl = document.getElementById('ct'); _ctEl.dataset.planId = p.id;
+  const _ctEl = document.getElementById('ct');
   _ctEl.innerHTML = `
   <div class="kpi-section">
     <div class="kpi-cards">
