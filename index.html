@@ -4099,22 +4099,82 @@ function renderResumoSemanal() {
     return { setor: s, planos: pl, acoes: ac, conc: co, atr: at, pct: pct };
   }).sort(function(a, b) { return b.acoes - a.acoes; });
 
-  // ── Destaques e Alertas ──────────────────────────────────────────────
-  var atrasados = plans.filter(function(p){ return p.status === 'atrasado'; });
-  var setoresComAtraso = setorRows.filter(function(s){ return s.atr > 0; }).map(function(s){ return s.setor; });
+  // ── Destaques e Alertas — 100% dinâmicos ────────────────────────────
+  var setoresComAtraso  = setorRows.filter(function(s){ return s.atr > 0; }).map(function(s){ return s.setor; });
+  var setoresConcluidos = setorRows.filter(function(s){ return s.pct === 100 && s.acoes > 0; });
+  var setoresMaisAcoes  = setorRows.slice(0, 1); // setor com mais ações
+  var planosAtrasados   = plans.filter(function(p){ return p.status === 'atrasado'; });
+  var planosConcluidos  = plans.filter(function(p){ return p.status === 'concluido'; });
+  var planosEmAnd       = plans.filter(function(p){ return p.status === 'em_andamento'; });
+  var planosSuspensos   = plans.filter(function(p){ return p.status === 'suspenso'; });
+
+  // Setor com melhor performance (>= 80%, excluindo 100% para não repetir)
+  var setoresBom = setorRows.filter(function(s){ return s.pct >= 80 && s.pct < 100 && s.acoes > 0; });
+  // Setor com pior performance (< 30%, com ações)
+  var setoresCriticos = setorRows.filter(function(s){ return s.pct < 30 && s.acoes > 0 && s.atr > 0; });
+  // Planos GUT Alta ainda em aberto
+  var altaAbertos = plans.filter(function(p){ return p.gp === 'alta' && p.status !== 'concluido' && p.status !== 'suspenso'; });
 
   var destaques = [];
-  var top = setorRows.filter(function(s){ return s.pct >= 80 && s.acoes > 0; });
-  if (top.length > 0) destaques.push('Implantação das reuniões de acompanhamento no formato Scrum com os setores envolvidos, proporcionando alinhamento e controle da execução dos planos de ação.');
-  destaques.push('Evolução no mapeamento das atividades dos processos, contribuindo na padronização operacional.');
-  if (top.length > 0) top.slice(0,2).forEach(function(s){ destaques.push(s.setor + ' com ' + s.pct + '% de conclusão das ações previstas.'); });
+
+  // 1. Planos concluídos
+  if (planosConcluidos.length > 0) {
+    destaques.push(planosConcluidos.length + ' plano(s) concluído(s) no total, demonstrando avanço na execução do S5.');
+  }
+  // 2. Setores com 100% de conclusão
+  if (setoresConcluidos.length > 0) {
+    var nomes = setoresConcluidos.map(function(s){ return s.setor; }).join(', ');
+    destaques.push(nomes + (setoresConcluidos.length === 1 ? ' atingiu' : ' atingiram') + ' 100% de conclusão das ações previstas.');
+  }
+  // 3. Setores com boa performance
+  if (setoresBom.length > 0) {
+    setoresBom.slice(0,2).forEach(function(s){
+      destaques.push(s.setor + ' com ' + s.pct + '% de conclusão — acima da meta de execução do período.');
+    });
+  }
+  // 4. % geral positivo
+  if (pctGlobal >= 50) {
+    destaques.push(pctGlobal + '% das ações concluídas globalmente — execução acima de 50% do planejado.');
+  }
+  // 5. Volume de ações monitoradas
+  if (totalAcoes >= 100) {
+    destaques.push(totalAcoes + ' ações monitoradas em ' + totalPlanos + ' planos, garantindo rastreabilidade total do S5.');
+  }
+  // Fallback se nenhum destaque gerado
+  if (destaques.length === 0) {
+    destaques.push('Monitoramento ativo de ' + totalPlanos + ' planos de ação em andamento.');
+  }
 
   var alertas = [];
-  if (totalAtr > 0) alertas.push('Baixa aderência aos prazos estabelecidos nos planos de ação, impactando o ritmo de execução das atividades planejadas;');
-  alertas.push('Morosidade na análise e aprovação de procedimentos por parte dos gestores das áreas;');
-  if (setoresComAtraso.length > 1) alertas.push('Necessidade de maior integração e comunicação entre os setores que compartilham responsabilidades dentro dos mesmos planos de ação, visando reduzir retrabalhos e atrasos.');
-  var semsAcoesConcluidas = plans.filter(function(p){ return p.actions.some(function(a){ return a.status === 'atrasado'; }); });
-  if (semsAcoesConcluidas.length > 0) alertas.push('Pendente definição da tratativa para as ocorrências identificadas nos planos com ações atrasadas.');
+
+  // 1. Ações atrasadas
+  if (totalAtr > 0) {
+    alertas.push(totalAtr + ' ação(ões) com prazo vencido — baixa aderência aos prazos estabelecidos nos planos de ação, impactando o ritmo de execução das atividades planejadas.');
+  }
+  // 2. Planos atrasados por setor
+  if (setoresComAtraso.length > 0) {
+    alertas.push((setoresComAtraso.length === 1
+      ? 'Setor ' + setoresComAtraso[0] + ' concentra'
+      : 'Setores ' + setoresComAtraso.slice(0, 3).join(', ') + ' concentram') +
+      ' ações atrasadas — necessária atenção da liderança para desbloqueio.');
+  }
+  // 3. Setores críticos (< 30%)
+  if (setoresCriticos.length > 0) {
+    var nomesC = setoresCriticos.map(function(s){ return s.setor + ' (' + s.pct + '%)'; }).join(', ');
+    alertas.push('Performance crítica em: ' + nomesC + '. Ações corretivas imediatas recomendadas.');
+  }
+  // 4. Planos GUT Alta em aberto
+  if (altaAbertos.length > 0) {
+    alertas.push(altaAbertos.length + ' plano(s) de prioridade GUT Alta ainda em aberto — demandam monitoramento contínuo para evitar impacto em auditorias e padronização.');
+  }
+  // 5. Planos suspensos
+  if (planosSuspensos.length > 0) {
+    alertas.push(planosSuspensos.length + ' plano(s) suspenso(s) aguardando desbloqueio — verificar dependências e retomar execução.');
+  }
+  // Fallback
+  if (alertas.length === 0) {
+    alertas.push('Nenhum alerta crítico identificado no período. Manter monitoramento contínuo.');
+  }
 
   // ── RENDER ────────────────────────────────────────────────────────────
   var h = '';
