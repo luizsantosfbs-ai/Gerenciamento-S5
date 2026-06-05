@@ -1351,6 +1351,10 @@ async function carregarLocal() {
   // 1. Carregar planos do IDB
   const idbPlans = await idbLoadAllPlans();
 
+  // Sincronizar _localVersion com o que está no IDB (evita resetar para 1 ao salvar)
+  const savedVer = (await idbGetMeta('version')) || 0;
+  if (savedVer > _localVersion) _localVersion = savedVer;
+
   // 2. Carregar attachments do IDB e reconstituir em memória
   if (!_attachmentsLoaded) {
     const atts = await idbLoadAllAttachments();
@@ -3707,9 +3711,10 @@ async function init() {
   if (window.__PRELOAD__ && window.__PRELOAD__.plans && window.__PRELOAD__.plans.length) {
     try {
       const pre = window.__PRELOAD__;
-      // Só usar se for mais recente que o IDB local
+      // Só usar se o preload for ESTRITAMENTE mais recente que o IDB local
+      // (>= causava sobrescrita das edições locais ao dar F5)
       const localVer = (await idbGetMeta('version')) || 0;
-      if (pre.version >= localVer) {
+      if (pre.version > localVer) {
         plans = pre.plans.map(p => ({
           ...p,
           obsLog: p.obsLog || [],
