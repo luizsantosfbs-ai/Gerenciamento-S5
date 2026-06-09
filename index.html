@@ -1440,7 +1440,11 @@ function clearGistCfg() { localStorage.removeItem(CFG_KEY); }
 // Payload para Gist (sem binários — binários ficam no arquivo separado de attachments)
 async function mkGistPayload() {
   const audit = await idbLoadAudit(500);
-  const ver   = (await idbGetMeta('version')) || _localVersion;
+  // Incrementar versão a cada save no Gist, para que outros usuários
+  // recebam remoteVer > localVer e apliquem os dados atualizados
+  const ver = ((await idbGetMeta('version')) || _localVersion) + 1;
+  _localVersion = ver;
+  await idbSetMeta('version', ver);
   return {
     plans: plans.map(p => ({
       ...p,
