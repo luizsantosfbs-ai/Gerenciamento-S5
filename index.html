@@ -1768,14 +1768,7 @@ async function carregarDados() {
     }
 
     // Remoto não tem novidades nos planos → só atualizar status
-    if (remoteVer < localVer) {
-      _lastSavedAt = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-      setSyncState('ok', `🟢 Sincronizado ${_lastSavedAt}`);
-      return;
-    }
-
-    // Versão igual e foi o próprio usuário que salvou → não re-aplicar (evita loop)
-    if (remoteVer === localVer && remoteData.updatedBy === getUser()) {
+    if (remoteVer <= localVer) {
       _lastSavedAt = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
       setSyncState('ok', `🟢 Sincronizado ${_lastSavedAt}`);
       return;
